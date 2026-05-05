@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sovereign-agent-config
+  labels:
+    app: sovereign-agent-orchestrator
+data:
+  # --- CONEXIÓN MCP (Zabbix) ---
+  ZABBIX_MCP_URL: "http://zabbix-mcp-service.tu-namespace.svc.cluster.local:8000/sse"
+
+  # --- CONFIGURACIÓN LLM (Ollama) ---
+  OLLAMA_BASE_URL: "http://ollama-service.tu-namespace.svc.cluster.local:11434"
+  LLM_MODEL: "llama3.2"
+
+  # --- CONFIGURACIÓN API ---
+  AGENT_PORT: "8080"
+  LOG_LEVEL: "INFO"
+
+  # --- COMPORTAMIENTO DEL AGENTE ---
+  SYSTEM_PROMPT: |
+    Eres un Agente de Operaciones Inteligente (SRE) especializado en OpenShift y Zabbix.
+    Tienes permiso para consultar métricas y estados de infraestructura.
+    Responde siempre en español. Si detectas una alerta crítica en Zabbix, resáltala al inicio.
+
+---
+
+# 1. DEFINICIÓN DEL DESPLIEGUE
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sovereign-agent-orchestrator
+  labels:
+    app: sovereign-agent
+spec:
+  replicas: 1 # <---- PUEDES ESCALAR SEGÚN LA CARGA ----->
+  selector:
+    matchLabels:
+      app: sovereign-agent
+  template:
+    metadata:
+      labels:
+        app: sovereign-agent
+    spec:
+      containers:
+      - name: python-agent
+        image: image-registry.openshift-image-registry.svc:5000/tu-namespace/agent-orchestrator:latest # <---- CONFIGURAR TU TAG DE IMAGEN ----->
+        ports:
+        - containerPort: 8080
+        
+        # INYECCIÓN DE CONFIGURACIÓN (Paso 1, 2 y 3)
+        envFrom:
+        - configMapRef:
+            name: sovereign-agent-config
+        
+        # MONITOREO DE SALUD (Basado en main.py)
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+        # CONTROL DE RECURSOS (Vital para entornos CPU)
+        resources:
+          requests:
+            cpu: "500m"    # 0.5 Cores mínimo
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"   # Máximo 2 Cores para no impactar otros Pods
+            memory: "1Gi"
+
+---
+
+# 2. DEFINICIÓN DEL SERVICE (Comunicación interna)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sovereign-agent-service
+spec:
+  selector:
+    app: sovereign-agent
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+
+---
+
+# 3. DEFINICIÓN DE LA ROUTE (Exposición externa/Open WebUI)
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: sovereign-agent-route
+spec:
+  to:
+    kind: Service
+    name: sovereign-agent-service
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge # Habilita HTTPS seguro
