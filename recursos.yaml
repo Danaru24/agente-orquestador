@@ -8,10 +8,11 @@ data:
   # --- CONEXIÓN MCP (Zabbix) ---
   ZABBIX_MCP_URL: "https://zabbix-mcp-server-agente-command.apps.ocp.wnpb8.sandbox2864.opentlc.com/mcp"
 
-  # --- CONFIGURACIÓN LLM (Ollama) ---
-  OLLAMA_BASE_URL: "http://ollama.agente-command.svc.cluster.local:11434"
-  LLM_MODEL: "llama3.2"
-
+  # --- CONEXIÓN LLAMA.CPP ---
+  # El puerto por defecto de llama.cpp suele ser 8080, pero ajústalo según tu servicio
+  LLAMACPP_BASE_URL: "http://qwen-service.agente-command.svc.cluster.local:8080/v1"
+  LLM_MODEL: "qwen.gguf" # El nombre que hayas definido en tu servidor llama.cpp
+  
   # --- CONFIGURACIÓN API ---
   AGENT_PORT: "8080"
   LOG_LEVEL: "INFO"
