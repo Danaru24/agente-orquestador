@@ -25,7 +25,7 @@ agent_executor = None
 async def startup_event():
     """Se ejecuta al arrancar el contenedor en OpenShift."""
     global agent_executor
-    print("🚀 Inicializando Agente y conectando con MCP/Ollama...")
+    print("🚀 Inicializando Agente y conectando con MCP y llama.cpp...")
     agent_executor = await create_agent()
     print("✅ Agente listo para recibir consultas.")
 
