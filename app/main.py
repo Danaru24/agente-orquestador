@@ -6,8 +6,17 @@ from typing import List, Optional, Dict, Any
 
 # Importamos el cerebro del agente (Paso 2)
 from agent import create_agent
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Sovereign Agent API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # En producción, podrías restringirlo a la URL de tu Open WebUI
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Variable global para el grafo compilado
 agent_executor = None
