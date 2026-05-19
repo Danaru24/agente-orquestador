@@ -10,6 +10,8 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 class ZabbixMCPClient:
     def __init__(self):
         self.mcp_url = os.getenv("ZABBIX_MCP_URL", "http://localhost:8000/sse")
+        # --- PRINT DE VERIFICACIÓN ---
+        print(f"DEBUG: Intentando conectar al MCP usando la URL: {self.mcp_url}")
         self.max_retries = 5
         self.retry_delay = 5  # segundos
 
