@@ -6,7 +6,7 @@ metadata:
     app: sovereign-agent-orchestrator
 data:
   # --- CONEXIÓN MCP (Zabbix) ---
-  ZABBIX_MCP_URL: "https://zabbix-mcp-server-agente-command.apps.ocp.wnpb8.sandbox2864.opentlc.com/sse"
+  ZABBIX_MCP_URL: "https://zabbix-mcp-server-agente-command.apps.ocp.wnpb8.sandbox2864.opentlc.com/mcp"
 
   # --- CONFIGURACIÓN LLM (Ollama) ---
   OLLAMA_BASE_URL: "http://ollama.agente-command.svc.cluster.local:11434"
