@@ -16,6 +16,15 @@ class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], add_messages]
 
 async def create_agent():
+    # ---- CONFIGURACIÓN DESDE VARIABLES DE ENTORNO ----
+    LLAMACPP_URL = os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080/v1")
+    MODEL_NAME = os.getenv("LLM_MODEL", "llama3.2")
+    
+    # --- PRINTS DE VERIFICACIÓN ---
+    print(f"DEBUG: Configuración de LLM detectada:")
+    print(f"       > URL: {LLAMACPP_URL}")
+    print(f"       > MODELO: {MODEL_NAME}")
+    
     # ---- NUEVAS VARIABLES PARA LLAMA.CPP ----
     LLAMACPP_URL = os.getenv("LLAMACPP_BASE_URL", "http://localhost:8080/v1")
     MODEL_NAME = os.getenv("LLM_MODEL", "local-model")
