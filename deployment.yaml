@@ -1,0 +1,84 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: k8s-webhook-agent
+  labels:
+    app: k8s-webhook-agent
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: k8s-webhook-agent
+    spec:
+      containers:
+      - name: webhook-container
+        # Reemplazar con la ruta de tu registro de imágenes interno de OpenShift o externo
+        image: docker-registry.default.svc:5000/my-namespace/k8s-webhook-agent:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        
+        # Inyección de variables de entorno desde el ConfigMap creado anteriormente
+        envFrom:
+        - configMapRef:
+            name: k8s-webhook-config
+            
+        # Sondas de salud (Liveness/Readiness) para el control del ciclo de vida del Pod en OpenShift
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          
+        # Definición de recursos límite y requeridos para evitar saturación del nodo CPU/Memoria
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-webhook-service
+  labels:
+    app: k8s-webhook-agent
+spec:
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: k8s-webhook-agent
+  type: ClusterIP
+
+---
+
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: k8s-webhook-route
+  labels:
+    app: k8s-webhook-agent
+spec:
+  to:
+    kind: Service
+    name: k8s-webhook-service
+  port:
+    targetPort: 8080
+  tls:
+    termination: edge

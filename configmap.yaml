@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-webhook-config
+  labels:
+    app: k8s-webhook-agent
+data:
+  # URL del LLM local ejecutándose en el clúster o accesible por red
+  LOCAL_MODEL_URL: "http://llm-service.my-namespace.svc.cluster.local:8000/v1"
+  
+  # Nombre de identificación del modelo a invocar
+  LOCAL_MODEL_NAME: "local-model"
+  
+  # Clave de API simulada para la compatibilidad con el cliente ChatOpenAI
+  SIMULATED_API_KEY: "mock-api-key-12345"
+  
+  # Tiempo de espera límite para solicitudes al modelo de lenguaje
+  LLM_TIMEOUT: "30"
+  
+  # Tiempo de espera límite para comprobar la URL del webhook
+  URL_VALIDATION_TIMEOUT: "5"
+  
+  # Puerto de red interno en el que escuchará FastAPI
+  AGENT_PORT: "8080"
+  
+  # Nivel de detalle del log
+  LOG_LEVEL: "INFO"
