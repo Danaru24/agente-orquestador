@@ -83,8 +83,11 @@ def create_agent() -> CompiledStateGraph:
     # Extraemos las configuraciones desde variables de entorno
     # Si no existen, se definen valores por defecto amigables para desarrollo local
     local_model_url = os.getenv("LOCAL_MODEL_URL", "http://localhost:8000/v1")
+    print("URL del modelo local: ", local_model_url)
     local_model_name = os.getenv("LOCAL_MODEL_NAME", "local-model")
+    print("Nombre del modelo local: ", local_model_name)
     simulated_api_key = os.getenv("SIMULATED_API_KEY", "mock-api-key-12345")
+    print("Clave API: ", simulated_api_key)
     
     try:
         llm_timeout = float(os.getenv("LLM_TIMEOUT", "30"))
