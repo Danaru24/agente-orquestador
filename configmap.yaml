@@ -25,3 +25,6 @@ data:
   
   # Nivel de detalle del log
   LOG_LEVEL: "INFO"
+  
+  # URL del servidor MCP remoto para Kubernetes usando transporte SSE
+  K8S_MCP_URL: "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
