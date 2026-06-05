@@ -1,23 +1,3 @@
-# ==========================================
-# Etapa 1: Constructor de dependencias (Builder)
-# ==========================================
-FROM python:3.11-slim AS builder
-
-WORKDIR /app
-
-# Instalamos herramientas de compilación básicas por si alguna dependencia las requiere
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copiamos y compilamos dependencias de Python
-COPY requirements.txt .
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
-
-
-# ==========================================
-# Etapa 2: Imagen de producción final
-# ==========================================
 FROM python:3.11-slim
 
 # Variables de entorno para optimizar Python en Docker
@@ -29,16 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Copiamos e instalamos las ruedas compiled (wheels) de la etapa anterior
-COPY --from=builder /app/wheels /wheels
-COPY --from=builder /app/requirements.txt .
-RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
-    && rm -rf /wheels /requirements.txt
+# Copiamos requirements.txt e instalamos dependencias de manera directa con acceso a internet
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
 # Copiamos el código fuente de la aplicación
 COPY app/ ./app
 
-# Exponemos el puerto de escucha
+# Exponemos el puerto de escucha (estándar en OpenShift es 8080)
 EXPOSE 8080
 
 # En OpenShift (incluido OpenShift 3.4), los contenedores se ejecutan por defecto con un UID aleatorio
