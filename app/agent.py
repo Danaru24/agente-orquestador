@@ -11,6 +11,9 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
+# Instanciamos el checkpointer en memoria de forma global para mantener el historial entre peticiones
+memory_checkpointer = MemorySaver()
+
 # =====================================================================
 # 1. DEFINICIÓN DEL ESTADO DEL AGENTE (AgentState)
 # =====================================================================
@@ -184,8 +187,5 @@ def create_agent(tools: list) -> CompiledStateGraph:
         workflow.set_entry_point("agent")
         workflow.add_edge("agent", END)
 
-    # Instanciamos el checkpointer en memoria para mantener el historial
-    checkpointer = MemorySaver()
-
-    # Compilamos el grafo con el checkpointer
-    return workflow.compile(checkpointer=checkpointer)
+    # Compilamos el grafo con el checkpointer global
+    return workflow.compile(checkpointer=memory_checkpointer)

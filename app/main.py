@@ -110,8 +110,18 @@ async def validate_url_async(url: str, timeout_seconds: float) -> bool:
 
 
 # =====================================================================
-# 4. GENERADOR SSE (Server-Sent Events) PARA STREAMING CON MCP DINÁMICO
+# 4. AUXILIAR DE RENDERIZACIÓN SSE Y GENERADOR
 # =====================================================================
+
+def format_sse(text: str) -> str:
+    """
+    Formatea un texto según la especificación de Server-Sent Events (SSE).
+    Cada línea del texto debe ir precedida por 'data: '. El mensaje completo debe terminar con '\n\n'.
+    Esto previene que OpenWebUI pierda los saltos de línea internos de Markdown.
+    """
+    lines = text.split("\n")
+    return "\n".join(f"data: {line}" for line in lines) + "\n\n"
+
 
 async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[str, None]:
     """
@@ -138,8 +148,8 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
         sse_url = sse_url.rstrip("/") + "/sse"
 
     try:
-        # 1. Establecer conexión SSE mediante sse_client
-        async with sse_client(url=sse_url) as streams:
+        # 1. Establecer conexión SSE mediante sse_client con timeout elevado para evitar caídas
+        async with sse_client(url=sse_url, timeout=60.0) as streams:
             read_stream, write_stream = streams
             
             # 2. Inicializar la sesión del protocolo MCP
@@ -150,12 +160,40 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 # 3. Descargar y mapear herramientas MCP a LangChain de forma dinámica
                 tools = await load_mcp_tools(session)
                 print(f"[SUCCESS] {len(tools)} herramientas cargadas desde el servidor MCP.")
+
+                # Envolver ejecución de herramientas en un try-except seguro para evitar que errores o timeouts crasheen la conexión SSE
+                wrapped_tools = []
+                for tool in tools:
+                    original_arun = tool._arun
+                    async def make_wrapped_arun(t=tool, orig_arun=original_arun):
+                        async def wrapped_arun(*args, **kwargs):
+                            try:
+                                return await orig_arun(*args, **kwargs)
+                            except Exception as e:
+                                print(f"[ERROR] Excepción capturada en ejecución asíncrona de la herramienta {t.name}: {e}")
+                                return f"Error: Falló la ejecución de la herramienta '{t.name}'. Detalle: {str(e)}"
+                        return wrapped_arun
+                    tool._arun = make_wrapped_arun()
+
+                    original_run = tool._run
+                    def make_wrapped_run(t=tool, orig_run=original_run):
+                        def wrapped_run(*args, **kwargs):
+                            try:
+                                return orig_run(*args, **kwargs)
+                            except Exception as e:
+                                print(f"[ERROR] Excepción capturada en ejecución síncrona de la herramienta {t.name}: {e}")
+                                return f"Error: Falló la ejecución de la herramienta '{t.name}'. Detalle: {str(e)}"
+                        return wrapped_run
+                    tool._run = make_wrapped_run()
+                    wrapped_tools.append(tool)
+                tools = wrapped_tools
                 
                 # 4. Compilar el agente de LangGraph con las herramientas cargadas
                 agent_executor = create_agent(tools)
                 print("[INFO] Agente compilado dinámicamente. Iniciando ejecución del grafo...")
                 
                 # 5. Transmitir los tokens en formato SSE
+                tools_executed = False
                 buffer = ""
                 checked_start = False
                 in_xml = False
@@ -163,12 +201,27 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 json_brace_count = 0
 
                 async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
+                    # Detectar si ya terminó el nodo de herramientas, lo que garantiza que el siguiente stream sea el final
+                    if event["event"] == "on_node_end" and event["name"] == "tools":
+                        tools_executed = True
+
                     if event["event"] == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
                         content = chunk.content
                         if not content:
                             continue
 
+                        # Si ya se ejecutaron herramientas, es el turno final de respuesta. Hacemos streaming directo.
+                        if tools_executed:
+                            cleaned_content = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL)
+                            cleaned_content = re.sub(r'<think>.*?</think>', '', cleaned_content, flags=re.DOTALL)
+                            cleaned_content = re.sub(r'</?(?:tool_call|think)>', '', cleaned_content)
+                            if cleaned_content:
+                                yield format_sse(cleaned_content)
+                                await asyncio.sleep(0.01)
+                            continue
+
+                        # Si no se han ejecutado herramientas, controlamos si es una llamada interna/intermedia a herramientas
                         if not checked_start:
                             buffer += content
                             stripped = buffer.strip()
@@ -183,7 +236,8 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                 checked_start = True
                                 json_brace_count = buffer.count("{") - buffer.count("}")
                             else:
-                                yield f"data: {buffer}\n\n"
+                                # Es una respuesta final directa del modelo (sin necesidad de herramientas)
+                                yield format_sse(buffer)
                                 buffer = ""
                                 checked_start = True
                                 await asyncio.sleep(0.01)
@@ -195,7 +249,7 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                     buffer = re.sub(r'<think>.*?</think>', '', buffer, flags=re.DOTALL)
                                     buffer = re.sub(r'</?(?:tool_call|think)>', '', buffer)
                                     if buffer:
-                                        yield f"data: {buffer}\n\n"
+                                        yield format_sse(buffer)
                                         buffer = ""
                                         await asyncio.sleep(0.01)
                                     in_xml = False
@@ -209,18 +263,17 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                         buffer = cleaned
                                     
                                     if buffer:
-                                        yield f"data: {buffer}\n\n"
+                                        yield format_sse(buffer)
                                         buffer = ""
                                         await asyncio.sleep(0.01)
                                     in_json = False
                                 elif len(buffer) > 1000:
-                                    yield f"data: {buffer}\n\n"
+                                    yield format_sse(buffer)
                                     buffer = ""
                                     in_json = False
                                     await asyncio.sleep(0.01)
                             else:
-                                yield f"data: {content}\n\n"
-                                # Cedemos control brevemente al event loop
+                                yield format_sse(content)
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
@@ -231,12 +284,12 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
         for exc in eg.exceptions:
             print(f" -> Sub-excepción: {type(exc).__name__}: {exc}")
         
-        yield f"data: [ERROR: Fallo de conexión SSE con MCP. Revisa los logs del orquestador]\n\n"
+        yield format_sse("[ERROR: Fallo de conexión SSE con MCP. Revisa los logs del orquestador]")
 
     except Exception as e:
         print(f"[ERROR] Fallo general en el flujo del cliente MCP / LangGraph: {e}")
         traceback.print_exc(file=sys.stdout)
-        yield f"data: [ERROR: Fallo al conectar o procesar con el servidor MCP: {str(e)}]\n\n"
+        yield format_sse(f"[ERROR: Fallo al conectar o procesar con el servidor MCP: {str(e)}]")
 
 
 # =====================================================================
