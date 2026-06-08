@@ -5,6 +5,7 @@ import httpx
 import traceback
 import sys
 import re
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -165,19 +166,24 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 wrapped_tools = []
                 for tool in tools:
                     def create_async_tool_handler(tool_name):
-                        # 1. Aceptamos explícitamente 'config' y empaquetamos el resto en kwargs
                         async def tool_executor(*args, config=None, **kwargs):
                             try:
-                                # 2. Limpiamos los argumentos: LangChain a veces cuela variables internas
-                                mcp_args = {
-                                    k: v for k, v in kwargs.items() 
-                                    if k not in ["run_manager", "callbacks", "tags", "metadata"]
-                                }
-                                # 3. Ejecutamos la llamada al servidor MCP
+                                # 1. Escudo de serialización a prueba de LangChain
+                                mcp_args = {}
+                                for key, value in kwargs.items():
+                                    if key in ["run_manager", "callbacks", "tags", "metadata", "config"]:
+                                        continue
+                                    try:
+                                        json.dumps(value)
+                                        mcp_args[key] = value
+                                    except TypeError:
+                                        pass
+                                
+                                # 2. Ejecutamos la llamada al servidor MCP con los argumentos limpios
                                 result = await session.call_tool(tool_name, arguments=mcp_args)
-                                # 4. Formateamos el resultado
+                                
+                                # 3. Retornamos la tupla esperada por LangGraph ('content_and_artifact')
                                 text_content = str(result)
-                                # 5. Como el formato exige 'content_and_artifact', retornamos una tupla.
                                 return text_content, result
                             except Exception as e:
                                 print(f"[ERROR] Excepción capturada en ejecución asíncrona de la herramienta {tool_name}: {e}")
