@@ -1,0 +1,82 @@
+# ==============================================================================
+# 1. Service Account
+# ==============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcp-service-account
+  namespace: infra-ai
+
+---
+# ==============================================================================
+# 2. ClusterRole (Permisos de solo lectura excluyendo Secrets)
+# ==============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-cluster-reader
+rules:
+  # Grupo Principal (Core)
+  - apiGroups: [""]
+    resources: 
+      - "nodes"
+      - "pods"
+      - "pods/log"
+      - "events"
+      - "services"
+      - "endpoints"
+      - "configmaps"
+      - "namespaces"
+      - "persistentvolumes"
+      - "persistentvolumeclaims"
+    verbs: ["get", "list", "watch"]
+
+  # Cargas de trabajo
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+  # Tareas programadas
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+
+  # Red
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+
+  # Ecosistema OpenShift
+  - apiGroups: ["route.openshift.io"]
+    resources: ["routes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["project.openshift.io"]
+    resources: ["projects"]
+    verbs: ["get", "list", "watch"]
+
+  # Autoscalado
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+
+  # Almacenamiento
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ==============================================================================
+# 3. ClusterRoleBinding (Asignación de permisos)
+# ==============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-global-access
+subjects:
+  - kind: ServiceAccount
+    name: mcp-service-account
+    namespace: infra-ai
+roleRef:
+  kind: ClusterRole
+  name: mcp-cluster-reader
+  apiGroup: rbac.authorization.k8s.io

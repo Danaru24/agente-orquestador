@@ -2,6 +2,8 @@ import os
 import asyncio
 import uuid
 import httpx
+import traceback
+import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -156,8 +158,17 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
                 
+    except ExceptionGroup as eg:
+        # Esto atrapará los errores dentro del TaskGroup en Python 3.11+
+        print("[ERROR CRÍTICO] Excepciones múltiples en el TaskGroup de MCP:")
+        for exc in eg.exceptions:
+            print(f" -> Sub-excepción: {type(exc).__name__}: {exc}")
+        
+        yield f"data: [ERROR: Fallo de conexión SSE con MCP. Revisa los logs del orquestador]\n\n"
+
     except Exception as e:
-        print(f"[ERROR] Fallo en el flujo del cliente MCP / LangGraph: {e}")
+        print(f"[ERROR] Fallo general en el flujo del cliente MCP / LangGraph: {e}")
+        traceback.print_exc(file=sys.stdout)
         yield f"data: [ERROR: Fallo al conectar o procesar con el servidor MCP: {str(e)}]\n\n"
 
 

@@ -11,6 +11,7 @@ spec:
       labels:
         app: k8s-webhook-agent
     spec:
+      serviceAccountName: mcp-service-account
       containers:
       - name: webhook-container
         # Reemplazar con la ruta de tu registro de imágenes interno de OpenShift o externo
