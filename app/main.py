@@ -128,9 +128,17 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
     print(f"[INFO] Iniciando conexión SSE con el servidor MCP en: {K8S_MCP_URL}")
 
+    # Para la conexión SSE, el cliente de Python requiere apuntar al endpoint /sse.
+    # Si la URL configurada termina en /mcp, la redirigimos dinámicamente a /sse.
+    sse_url = K8S_MCP_URL
+    if sse_url.endswith("/mcp"):
+        sse_url = sse_url[:-4] + "/sse"
+    elif not sse_url.endswith("/sse"):
+        sse_url = sse_url.rstrip("/") + "/sse"
+
     try:
         # 1. Establecer conexión SSE mediante sse_client
-        async with sse_client(url=K8S_MCP_URL) as streams:
+        async with sse_client(url=sse_url) as streams:
             read_stream, write_stream = streams
             
             # 2. Inicializar la sesión del protocolo MCP
