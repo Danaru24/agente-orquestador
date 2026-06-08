@@ -4,6 +4,7 @@ import uuid
 import httpx
 import traceback
 import sys
+import re
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -160,9 +161,15 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                         chunk = event["data"]["chunk"]
                         content = chunk.content
                         if content:
-                            yield f"data: {content}\n\n"
-                            # Cedemos control brevemente al event loop
-                            await asyncio.sleep(0.01)
+                            # Limpieza rápida en caliente (elimina etiquetas completas o parciales si vienen en el chunk)
+                            cleaned_content = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL)
+                            cleaned_content = re.sub(r'<think>.*?</think>', '', cleaned_content, flags=re.DOTALL)
+                            cleaned_content = re.sub(r'</?(?:tool_call|think)>', '', cleaned_content)
+                            
+                            if cleaned_content:
+                                yield f"data: {cleaned_content}\n\n"
+                                # Cedemos control brevemente al event loop
+                                await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
                 
