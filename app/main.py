@@ -283,6 +283,8 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
         print("[ERROR CRÍTICO] Excepciones múltiples en el TaskGroup de MCP:")
         for exc in eg.exceptions:
             print(f" -> Sub-excepción: {type(exc).__name__}: {exc}")
+            # Esto imprimirá la línea exacta de la librería que está fallando
+            traceback.print_exception(type(exc), exc, exc.__traceback__)
         
         yield format_sse("[ERROR: Fallo de conexión SSE con MCP. Revisa los logs del orquestador]")
 
