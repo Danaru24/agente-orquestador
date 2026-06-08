@@ -165,7 +165,7 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 wrapped_tools = []
                 for tool in tools:
                     original_arun = tool._arun
-                    async def make_wrapped_arun(t=tool, orig_arun=original_arun):
+                    def make_wrapped_arun(t=tool, orig_arun=original_arun):
                         async def wrapped_arun(*args, **kwargs):
                             try:
                                 return await orig_arun(*args, **kwargs)
