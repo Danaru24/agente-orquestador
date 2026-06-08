@@ -1,9 +1,12 @@
 import os
+import re
+import json
+import uuid
 from typing import Annotated, TypedDict, List
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
@@ -103,6 +106,36 @@ def create_agent(tools: list) -> CompiledStateGraph:
         
         messages = [system_prompt] + state["messages"]
         response = llm_with_tools.invoke(messages)
+        
+        # Parseo manual para modelos locales que devuelven tool calls en formato XML (como Qwen)
+        content = response.content
+        if isinstance(content, str) and "<tool_call>" in content:
+            tool_calls = []
+            pattern = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+            for m in pattern.finditer(content):
+                json_str = m.group(1).strip()
+                try:
+                    tool_data = json.loads(json_str)
+                    tool_name = tool_data.get("name")
+                    tool_args = tool_data.get("args") or tool_data.get("arguments") or {}
+                    tool_calls.append({
+                        "name": tool_name,
+                        "args": tool_args,
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "tool_call"
+                    })
+                except Exception as parse_err:
+                    print(f"[ERROR] Error al parsear tool_call JSON: {parse_err}")
+            
+            if tool_calls:
+                print(f"[DEBUG] Se detectaron y parsearon {len(tool_calls)} tool calls desde XML de forma manual.")
+                new_response = AIMessage(
+                    content="",
+                    tool_calls=tool_calls,
+                    id=response.id
+                )
+                response = new_response
+
         return {"messages": [response]}
 
     # =====================================================================
