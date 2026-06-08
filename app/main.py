@@ -156,18 +156,70 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 print("[INFO] Agente compilado dinámicamente. Iniciando ejecución del grafo...")
                 
                 # 5. Transmitir los tokens en formato SSE
+                buffer = ""
+                checked_start = False
+                in_xml = False
+                in_json = False
+                json_brace_count = 0
+
                 async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
                     if event["event"] == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
                         content = chunk.content
-                        if content:
-                            # Limpieza rápida en caliente (elimina etiquetas completas o parciales si vienen en el chunk)
-                            cleaned_content = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL)
-                            cleaned_content = re.sub(r'<think>.*?</think>', '', cleaned_content, flags=re.DOTALL)
-                            cleaned_content = re.sub(r'</?(?:tool_call|think)>', '', cleaned_content)
-                            
-                            if cleaned_content:
-                                yield f"data: {cleaned_content}\n\n"
+                        if not content:
+                            continue
+
+                        if not checked_start:
+                            buffer += content
+                            stripped = buffer.strip()
+                            if not stripped:
+                                continue
+
+                            if stripped.startswith("<tool_call>") or stripped.startswith("<think>"):
+                                in_xml = True
+                                checked_start = True
+                            elif stripped.startswith("{"):
+                                in_json = True
+                                checked_start = True
+                                json_brace_count = buffer.count("{") - buffer.count("}")
+                            else:
+                                yield f"data: {buffer}\n\n"
+                                buffer = ""
+                                checked_start = True
+                                await asyncio.sleep(0.01)
+                        else:
+                            if in_xml:
+                                buffer += content
+                                if "</tool_call>" in buffer or "</think>" in buffer:
+                                    buffer = re.sub(r'<tool_call>.*?</tool_call>', '', buffer, flags=re.DOTALL)
+                                    buffer = re.sub(r'<think>.*?</think>', '', buffer, flags=re.DOTALL)
+                                    buffer = re.sub(r'</?(?:tool_call|think)>', '', buffer)
+                                    if buffer:
+                                        yield f"data: {buffer}\n\n"
+                                        buffer = ""
+                                        await asyncio.sleep(0.01)
+                                    in_xml = False
+                            elif in_json:
+                                buffer += content
+                                json_brace_count = buffer.count("{") - buffer.count("}")
+                                if json_brace_count <= 0 and "}" in buffer:
+                                    cleaned = re.sub(r'^\s*\{"name":.*?"arguments":\s*\{.*?\}\}\s*', '', buffer, flags=re.DOTALL)
+                                    cleaned = re.sub(r'^\s*\{"name":.*?"args":\s*\{.*?\}\}\s*', '', cleaned, flags=re.DOTALL)
+                                    if cleaned != buffer:
+                                        buffer = cleaned
+                                    
+                                    if buffer:
+                                        yield f"data: {buffer}\n\n"
+                                        buffer = ""
+                                        await asyncio.sleep(0.01)
+                                    in_json = False
+                                elif len(buffer) > 1000:
+                                    yield f"data: {buffer}\n\n"
+                                    buffer = ""
+                                    in_json = False
+                                    await asyncio.sleep(0.01)
+                            else:
+                                yield f"data: {content}\n\n"
                                 # Cedemos control brevemente al event loop
                                 await asyncio.sleep(0.01)
 

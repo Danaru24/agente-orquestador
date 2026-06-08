@@ -109,28 +109,52 @@ def create_agent(tools: list) -> CompiledStateGraph:
         messages = [system_prompt] + state["messages"]
         response = llm_with_tools.invoke(messages)
         
-        # Parseo manual para modelos locales que devuelven tool calls en formato XML (como Qwen)
+        # Parseo manual para modelos locales que devuelven tool calls (formato XML o JSON crudo al inicio)
         content = response.content
-        if isinstance(content, str) and "<tool_call>" in content:
-            tool_calls = []
-            pattern = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
-            for m in pattern.finditer(content):
-                json_str = m.group(1).strip()
-                try:
-                    tool_data = json.loads(json_str)
-                    tool_name = tool_data.get("name")
-                    tool_args = tool_data.get("args") or tool_data.get("arguments") or {}
-                    tool_calls.append({
-                        "name": tool_name,
-                        "args": tool_args,
-                        "id": f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "tool_call"
-                    })
-                except Exception as parse_err:
-                    print(f"[ERROR] Error al parsear tool_call JSON: {parse_err}")
-            
+        tool_calls = []
+        if isinstance(content, str):
+            # Caso 1: Formato XML (<tool_call>...</tool_call>)
+            if "<tool_call>" in content:
+                pattern = re.compile(r"<tool_call>(.*?)</tool_call>", re.DOTALL)
+                for m in pattern.finditer(content):
+                    json_str = m.group(1).strip()
+                    try:
+                        tool_data = json.loads(json_str)
+                        tool_name = tool_data.get("name")
+                        tool_args = tool_data.get("args") or tool_data.get("arguments") or {}
+                        tool_calls.append({
+                            "name": tool_name,
+                            "args": tool_args,
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "tool_call"
+                        })
+                    except Exception as parse_err:
+                        print(f"[ERROR] Error al parsear tool_call XML JSON: {parse_err}")
+            # Caso 2: Formato JSON crudo al inicio del mensaje
+            elif content.strip().startswith("{"):
+                stripped_content = content.strip()
+                # Buscamos la primera estructura JSON de tool call
+                json_match = re.match(r'^\s*(\{"name":.*?"arguments":\s*\{.*?\}\})', stripped_content, re.DOTALL)
+                if not json_match:
+                    json_match = re.match(r'^\s*(\{"name":.*?"args":\s*\{.*?\}\})', stripped_content, re.DOTALL)
+                
+                if json_match:
+                    json_str = json_match.group(1)
+                    try:
+                        tool_data = json.loads(json_str)
+                        tool_name = tool_data.get("name")
+                        tool_args = tool_data.get("args") or tool_data.get("arguments") or {}
+                        tool_calls.append({
+                            "name": tool_name,
+                            "args": tool_args,
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "tool_call"
+                        })
+                    except Exception as parse_err:
+                        print(f"[ERROR] Error al parsear tool_call JSON crudo: {parse_err}")
+
             if tool_calls:
-                print(f"[DEBUG] Se detectaron y parsearon {len(tool_calls)} tool calls desde XML de forma manual.")
+                print(f"[DEBUG] Se detectaron y parsearon {len(tool_calls)} tool calls de forma manual.")
                 new_response = AIMessage(
                     content="",
                     tool_calls=tool_calls,
