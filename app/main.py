@@ -164,27 +164,27 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 # Envolver ejecución de herramientas en un try-except seguro para evitar que errores o timeouts crasheen la conexión SSE
                 wrapped_tools = []
                 for tool in tools:
-                    original_arun = tool._arun
-                    def make_wrapped_arun(t=tool, orig_arun=original_arun):
-                        async def wrapped_arun(*args, **kwargs):
+                    def create_async_tool_handler(tool_name):
+                        # 1. Aceptamos explícitamente 'config' y empaquetamos el resto en kwargs
+                        async def tool_executor(*args, config=None, **kwargs):
                             try:
-                                return await orig_arun(*args, **kwargs)
+                                # 2. Limpiamos los argumentos: LangChain a veces cuela variables internas
+                                mcp_args = {
+                                    k: v for k, v in kwargs.items() 
+                                    if k not in ["run_manager", "callbacks", "tags", "metadata"]
+                                }
+                                # 3. Ejecutamos la llamada al servidor MCP
+                                result = await session.call_tool(tool_name, arguments=mcp_args)
+                                # 4. Formateamos el resultado
+                                text_content = str(result)
+                                # 5. Como el formato exige 'content_and_artifact', retornamos una tupla.
+                                return text_content, result
                             except Exception as e:
-                                print(f"[ERROR] Excepción capturada en ejecución asíncrona de la herramienta {t.name}: {e}")
-                                return f"Error: Falló la ejecución de la herramienta '{t.name}'. Detalle: {str(e)}"
-                        return wrapped_arun
-                    tool._arun = make_wrapped_arun()
+                                print(f"[ERROR] Excepción capturada en ejecución asíncrona de la herramienta {tool_name}: {e}")
+                                return f"Error: Falló la ejecución de la herramienta '{tool_name}'. Detalle: {str(e)}", None
+                        return tool_executor
 
-                    original_run = tool._run
-                    def make_wrapped_run(t=tool, orig_run=original_run):
-                        def wrapped_run(*args, **kwargs):
-                            try:
-                                return orig_run(*args, **kwargs)
-                            except Exception as e:
-                                print(f"[ERROR] Excepción capturada en ejecución síncrona de la herramienta {t.name}: {e}")
-                                return f"Error: Falló la ejecución de la herramienta '{t.name}'. Detalle: {str(e)}"
-                        return wrapped_run
-                    tool._run = make_wrapped_run()
+                    tool._arun = create_async_tool_handler(tool.name)
                     wrapped_tools.append(tool)
                 tools = wrapped_tools
                 
