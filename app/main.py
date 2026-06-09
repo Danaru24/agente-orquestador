@@ -230,9 +230,12 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                     continue # Saltamos el 'yield', suprimiendo este chunk de la interfaz
 
                             if content and not in_tool_call and not in_think:
-                                # Arreglar el formato Markdown escapando saltos de línea
-                                formatted_content = content.replace('\n', '\ndata: ')
-                                yield f"data: {formatted_content}\n\n"
+                                # Dividimos el string por saltos de línea para respetar el estándar SSE
+                                lines = content.split('\n')
+                                # Prefijamos cada línea interna con 'data: '
+                                sse_data = "\n".join([f"data: {line}" for line in lines])
+                                # Enviamos el bloque completo
+                                yield f"{sse_data}\n\n"
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
