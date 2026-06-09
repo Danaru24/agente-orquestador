@@ -34,11 +34,11 @@ except ImportError:
 # =====================================================================
 
 # Lista de servidores MCP remotos para conexión simultánea
-# Cada URL debe apuntar al endpoint base del servidor MCP (se redirige automáticamente a /sse)
+# Cada URL debe apuntar al endpoint EXACTO de streaming de cada servidor (sin modificaciones)
 MCP_SERVERS = [
     url.strip() for url in os.getenv(
         "MCP_SERVERS",
-        "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/mcp,https://zabbix-mcp-server-agente-command.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
+        "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/sse,https://zabbix-mcp-server-agente-command.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
     ).split(",") if url.strip()
 ]
 
@@ -146,24 +146,15 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
     print(f"[INFO] Iniciando conexión con {len(MCP_SERVERS)} servidor(es) MCP...")
 
-    def resolve_sse_url(url: str) -> str:
-        """Convierte la URL del servidor MCP al endpoint SSE correcto."""
-        if url.endswith("/mcp"):
-            return url[:-4] + "/sse"
-        elif not url.endswith("/sse"):
-            return url.rstrip("/") + "/sse"
-        return url
-
     try:
         async with AsyncExitStack() as stack:
             all_tools = []
 
-            # Conectamos con cada servidor de la lista
+            # Conectamos con cada servidor de la lista usando la URL tal cual
             for url in MCP_SERVERS:
-                sse_url = resolve_sse_url(url)
                 try:
-                    # 1. Abrimos conexión SSE
-                    streams = await stack.enter_async_context(sse_client(url=sse_url, timeout=None))
+                    # 1. Abrimos conexión SSE con la URL exacta (sin modificaciones)
+                    streams = await stack.enter_async_context(sse_client(url=url, timeout=None))
                     read_stream, write_stream = streams
 
                     # 2. Inicializamos la sesión para este servidor
