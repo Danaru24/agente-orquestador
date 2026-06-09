@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, AsyncGenerator
+from contextlib import AsyncExitStack
 from dotenv import load_dotenv
 
 # Importaciones del cliente MCP oficial y adaptadores
@@ -32,11 +33,14 @@ except ImportError:
 # CONFIGURACIÓN GLOBAL DE VARIABLES DE ENTORNO
 # =====================================================================
 
-# URL base del servidor MCP remoto para Kubernetes usando transporte SSE
-K8S_MCP_URL = os.getenv(
-    "K8S_MCP_URL",
-    "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
-)
+# Lista de servidores MCP remotos para conexión simultánea
+# Cada URL debe apuntar al endpoint base del servidor MCP (se redirige automáticamente a /sse)
+MCP_SERVERS = [
+    url.strip() for url in os.getenv(
+        "MCP_SERVERS",
+        "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/mcp,https://zabbix-mcp-server-agente-command.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
+    ).split(",") if url.strip()
+]
 
 # =====================================================================
 # 1. INICIALIZACIÓN DE LA APLICACIÓN FASTAPI
@@ -63,7 +67,8 @@ async def startup_event():
     Evento de ciclo de vida de FastAPI al arrancar el servidor.
     """
     print("[STARTUP] Iniciando el webhook del Agente SRE con soporte MCP...")
-    print(f"[STARTUP] Servidor MCP configurado en: {K8S_MCP_URL}")
+    for i, url in enumerate(MCP_SERVERS, 1):
+        print(f"[STARTUP] Servidor MCP #{i}: {url}")
     print("[SUCCESS] Webhook listo para compilar agentes dinámicamente por petición.")
 
 
@@ -139,105 +144,113 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
         "messages": [("user", message)]
     }
 
-    print(f"[INFO] Iniciando conexión SSE con el servidor MCP en: {K8S_MCP_URL}")
+    print(f"[INFO] Iniciando conexión con {len(MCP_SERVERS)} servidor(es) MCP...")
 
-    # Para la conexión SSE, el cliente de Python requiere apuntar al endpoint /sse.
-    # Si la URL configurada termina en /mcp, la redirigimos dinámicamente a /sse.
-    sse_url = K8S_MCP_URL
-    if sse_url.endswith("/mcp"):
-        sse_url = sse_url[:-4] + "/sse"
-    elif not sse_url.endswith("/sse"):
-        sse_url = sse_url.rstrip("/") + "/sse"
+    def resolve_sse_url(url: str) -> str:
+        """Convierte la URL del servidor MCP al endpoint SSE correcto."""
+        if url.endswith("/mcp"):
+            return url[:-4] + "/sse"
+        elif not url.endswith("/sse"):
+            return url.rstrip("/") + "/sse"
+        return url
 
     try:
-        # 1. Establecer conexión SSE mediante sse_client con timeout elevado para evitar caídas
-        async with sse_client(url=sse_url, timeout=None) as streams:
-            read_stream, write_stream = streams
-            
-            # 2. Inicializar la sesión del protocolo MCP
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                print("[SUCCESS] Sesión MCP inicializada correctamente.")
-                
-                # 3. Descargar y mapear herramientas MCP a LangChain de forma dinámica
-                tools = await load_mcp_tools(session)
-                print(f"[SUCCESS] {len(tools)} herramientas cargadas desde el servidor MCP.")
+        async with AsyncExitStack() as stack:
+            all_tools = []
 
-                # Envolver ejecución de herramientas en un try-except seguro para evitar que errores o timeouts crasheen la conexión SSE
-                wrapped_tools = []
-                for tool in tools:
-                    def create_async_tool_handler(tool_name):
-                        async def tool_executor(*args, config=None, **kwargs):
-                            try:
-                                # 1. Escudo de serialización a prueba de LangChain
-                                mcp_args = {}
-                                for key, value in kwargs.items():
-                                    if key in ["run_manager", "callbacks", "tags", "metadata", "config"]:
-                                        continue
-                                    try:
-                                        json.dumps(value)
-                                        mcp_args[key] = value
-                                    except TypeError:
-                                        pass
-                                
-                                # 2. Ejecutamos la llamada al servidor MCP con los argumentos limpios
-                                result = await session.call_tool(tool_name, arguments=mcp_args)
-                                
-                                # 3. Retornamos la tupla esperada por LangGraph ('content_and_artifact')
-                                text_content = str(result)
-                                return text_content, result
-                            except Exception as e:
-                                print(f"[ERROR] Excepción capturada en ejecución asíncrona de la herramienta {tool_name}: {e}")
-                                return f"Error: Falló la ejecución de la herramienta '{tool_name}'. Detalle: {str(e)}", None
-                        return tool_executor
+            # Conectamos con cada servidor de la lista
+            for url in MCP_SERVERS:
+                sse_url = resolve_sse_url(url)
+                try:
+                    # 1. Abrimos conexión SSE
+                    streams = await stack.enter_async_context(sse_client(url=sse_url, timeout=None))
+                    read_stream, write_stream = streams
 
-                    tool._arun = create_async_tool_handler(tool.name)
-                    wrapped_tools.append(tool)
-                tools = wrapped_tools
-                
-                # 4. Compilar el agente de LangGraph con las herramientas cargadas
-                agent_executor = create_agent(tools)
-                print("[INFO] Agente compilado dinámicamente. Iniciando ejecución del grafo...")
-                
-                # 5. Transmitir los tokens en formato SSE
-                in_tool_call = False
-                in_think = False
+                    # 2. Inicializamos la sesión para este servidor
+                    session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+                    await session.initialize()
+                    print(f"[SUCCESS] Sesión MCP inicializada para: {url}")
 
-                async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
-                    if event["event"] == "on_chat_model_stream":
-                        chunk = event["data"]["chunk"]
-                        content = chunk.content
-                        if content:
-                            # Ocultar tags de pensamiento
-                            if "<think>" in content:
-                                in_think = True
-                            if in_think:
-                                if "</think>" in content:
-                                    in_think = False
-                                    content = content.split("</think>")[-1]
-                                else:
-                                    continue
+                    # 3. Descargamos las herramientas
+                    server_tools = await load_mcp_tools(session)
+                    print(f"[SUCCESS] {len(server_tools)} herramientas cargadas de {url}")
 
-                            # Ocultar tags de llamadas a herramientas
-                            if "<tool_call>" in content:
-                                in_tool_call = True
-                                
-                            if in_tool_call:
-                                if "</tool_call>" in content:
-                                    in_tool_call = False
-                                    # Limpiamos la parte del tag si llegó texto útil en el mismo chunk
-                                    content = content.split("</tool_call>")[-1]
-                                else:
-                                    continue # Saltamos el 'yield', suprimiendo este chunk de la interfaz
+                    # 4. Envolvemos cada herramienta con el closure vinculado a ESTA sesión
+                    for tool in server_tools:
+                        def create_async_tool_handler(tool_name, bound_session):
+                            async def tool_executor(*args, config=None, **kwargs):
+                                try:
+                                    mcp_args = {}
+                                    for key, value in kwargs.items():
+                                        if key in ["run_manager", "callbacks", "tags", "metadata", "config"]:
+                                            continue
+                                        try:
+                                            json.dumps(value)
+                                            mcp_args[key] = value
+                                        except TypeError:
+                                            pass
+                                    result = await bound_session.call_tool(tool_name, arguments=mcp_args)
+                                    text_content = str(result)
+                                    return text_content, result
+                                except Exception as e:
+                                    print(f"[ERROR] Excepción en herramienta {tool_name}: {e}")
+                                    return f"Error: Falló la ejecución de la herramienta '{tool_name}'. Detalle: {str(e)}", None
+                            return tool_executor
 
-                            if content and not in_tool_call and not in_think:
-                                # json.dumps convierte el string crudo en un string JSON seguro
-                                # Ejemplo: "Hola\nMundo" -> '"Hola\\nMundo"' (viaja seguro en una línea HTTP)
-                                safe_content = json.dumps(content)
-                                yield f"data: {safe_content}\n\n"
-                                await asyncio.sleep(0.01)
+                        tool._arun = create_async_tool_handler(tool.name, session)
+                        all_tools.append(tool)
 
-                print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
+                except Exception as e:
+                    # Si un MCP está caído, no rompemos el resto
+                    print(f"[WARNING] Fallo al conectar con MCP {url}: {e}")
+                    traceback.print_exc(file=sys.stdout)
+                    continue
+
+            if not all_tools:
+                raise RuntimeError("No se pudo cargar ninguna herramienta de los servidores MCP.")
+
+            print(f"[INFO] Agente compilado con un total de {len(all_tools)} herramientas combinadas.")
+
+            # 5. Compilar el agente de LangGraph con las herramientas unificadas
+            agent_executor = create_agent(all_tools)
+            print("[INFO] Agente compilado dinámicamente. Iniciando ejecución del grafo...")
+
+            # 6. Transmitir los tokens en formato SSE
+            in_tool_call = False
+            in_think = False
+
+            async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
+                if event["event"] == "on_chat_model_stream":
+                    chunk = event["data"]["chunk"]
+                    content = chunk.content
+                    if content:
+                        # Ocultar tags de pensamiento
+                        if "<think>" in content:
+                            in_think = True
+                        if in_think:
+                            if "</think>" in content:
+                                in_think = False
+                                content = content.split("</think>")[-1]
+                            else:
+                                continue
+
+                        # Ocultar tags de llamadas a herramientas
+                        if "<tool_call>" in content:
+                            in_tool_call = True
+
+                        if in_tool_call:
+                            if "</tool_call>" in content:
+                                in_tool_call = False
+                                content = content.split("</tool_call>")[-1]
+                            else:
+                                continue
+
+                        if content and not in_tool_call and not in_think:
+                            safe_content = json.dumps(content)
+                            yield f"data: {safe_content}\n\n"
+                            await asyncio.sleep(0.01)
+
+            print("[INFO] Flujo del agente finalizado. Cerrando conexiones MCP...")
                 
     except ExceptionGroup as eg:
         # Esto atrapará los errores dentro del TaskGroup en Python 3.11+
@@ -303,7 +316,7 @@ async def health_check():
     """
     return {
         "status": "ok",
-        "mcp_url": K8S_MCP_URL
+        "mcp_servers": MCP_SERVERS
     }
 
 
