@@ -231,8 +231,8 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                     continue # Saltamos el 'yield', suprimiendo este chunk de la interfaz
 
                             if content and not in_tool_call and not in_think:
-                                # Yield del texto puro. OpenWebUI orquesta el resto.
-                                yield content
+                                # Forma estándar y pura de Server-Sent Events (SSE)
+                                yield f"data: {content}\n\n"
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
