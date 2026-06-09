@@ -150,7 +150,7 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
     try:
         # 1. Establecer conexión SSE mediante sse_client con timeout elevado para evitar caídas
-        async with sse_client(url=sse_url, timeout=60.0) as streams:
+        async with sse_client(url=sse_url, timeout=None) as streams:
             read_stream, write_stream = streams
             
             # 2. Inicializar la sesión del protocolo MCP
@@ -199,87 +199,40 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 print("[INFO] Agente compilado dinámicamente. Iniciando ejecución del grafo...")
                 
                 # 5. Transmitir los tokens en formato SSE
-                tools_executed = False
-                buffer = ""
-                checked_start = False
-                in_xml = False
-                in_json = False
-                json_brace_count = 0
+                in_tool_call = False
+                in_think = False
 
                 async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
-                    # Detectar si ya terminó el nodo de herramientas, lo que garantiza que el siguiente stream sea el final
-                    if event["event"] == "on_node_end" and event["name"] == "tools":
-                        tools_executed = True
-
                     if event["event"] == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
                         content = chunk.content
-                        if not content:
-                            continue
+                        if content:
+                            # Ocultar tags de pensamiento
+                            if "<think>" in content:
+                                in_think = True
+                            if in_think:
+                                if "</think>" in content:
+                                    in_think = False
+                                    content = content.split("</think>")[-1]
+                                else:
+                                    continue
 
-                        # Si ya se ejecutaron herramientas, es el turno final de respuesta. Hacemos streaming directo.
-                        if tools_executed:
-                            cleaned_content = re.sub(r'<tool_call>.*?</tool_call>', '', content, flags=re.DOTALL)
-                            cleaned_content = re.sub(r'<think>.*?</think>', '', cleaned_content, flags=re.DOTALL)
-                            cleaned_content = re.sub(r'</?(?:tool_call|think)>', '', cleaned_content)
-                            if cleaned_content:
-                                yield format_sse(cleaned_content)
-                                await asyncio.sleep(0.01)
-                            continue
+                            # Ocultar tags de llamadas a herramientas
+                            if "<tool_call>" in content:
+                                in_tool_call = True
+                                
+                            if in_tool_call:
+                                if "</tool_call>" in content:
+                                    in_tool_call = False
+                                    # Limpiamos la parte del tag si llegó texto útil en el mismo chunk
+                                    content = content.split("</tool_call>")[-1]
+                                else:
+                                    continue # Saltamos el 'yield', suprimiendo este chunk de la interfaz
 
-                        # Si no se han ejecutado herramientas, controlamos si es una llamada interna/intermedia a herramientas
-                        if not checked_start:
-                            buffer += content
-                            stripped = buffer.strip()
-                            if not stripped:
-                                continue
-
-                            if stripped.startswith("<tool_call>") or stripped.startswith("<think>"):
-                                in_xml = True
-                                checked_start = True
-                            elif stripped.startswith("{"):
-                                in_json = True
-                                checked_start = True
-                                json_brace_count = buffer.count("{") - buffer.count("}")
-                            else:
-                                # Es una respuesta final directa del modelo (sin necesidad de herramientas)
-                                yield format_sse(buffer)
-                                buffer = ""
-                                checked_start = True
-                                await asyncio.sleep(0.01)
-                        else:
-                            if in_xml:
-                                buffer += content
-                                if "</tool_call>" in buffer or "</think>" in buffer:
-                                    buffer = re.sub(r'<tool_call>.*?</tool_call>', '', buffer, flags=re.DOTALL)
-                                    buffer = re.sub(r'<think>.*?</think>', '', buffer, flags=re.DOTALL)
-                                    buffer = re.sub(r'</?(?:tool_call|think)>', '', buffer)
-                                    if buffer:
-                                        yield format_sse(buffer)
-                                        buffer = ""
-                                        await asyncio.sleep(0.01)
-                                    in_xml = False
-                            elif in_json:
-                                buffer += content
-                                json_brace_count = buffer.count("{") - buffer.count("}")
-                                if json_brace_count <= 0 and "}" in buffer:
-                                    cleaned = re.sub(r'^\s*\{"name":.*?"arguments":\s*\{.*?\}\}\s*', '', buffer, flags=re.DOTALL)
-                                    cleaned = re.sub(r'^\s*\{"name":.*?"args":\s*\{.*?\}\}\s*', '', cleaned, flags=re.DOTALL)
-                                    if cleaned != buffer:
-                                        buffer = cleaned
-                                    
-                                    if buffer:
-                                        yield format_sse(buffer)
-                                        buffer = ""
-                                        await asyncio.sleep(0.01)
-                                    in_json = False
-                                elif len(buffer) > 1000:
-                                    yield format_sse(buffer)
-                                    buffer = ""
-                                    in_json = False
-                                    await asyncio.sleep(0.01)
-                            else:
-                                yield format_sse(content)
+                            if content and not in_tool_call and not in_think:
+                                # Arreglar el formato Markdown escapando saltos de línea
+                                formatted_content = content.replace('\n', '\ndata: ')
+                                yield f"data: {formatted_content}\n\n"
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
