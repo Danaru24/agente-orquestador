@@ -6,6 +6,7 @@ import traceback
 import sys
 import re
 import json
+import time
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -230,12 +231,21 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                     continue # Saltamos el 'yield', suprimiendo este chunk de la interfaz
 
                             if content and not in_tool_call and not in_think:
-                                # Dividimos el string por saltos de línea para respetar el estándar SSE
-                                lines = content.split('\n')
-                                # Prefijamos cada línea interna con 'data: '
-                                sse_data = "\n".join([f"data: {line}" for line in lines])
-                                # Enviamos el bloque completo
-                                yield f"{sse_data}\n\n"
+                                # Empaquetamos el fragmento en la estructura nativa que espera OpenWebUI
+                                chunk_payload = {
+                                    "id": "chatcmpl-mcp-agent",
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": "agente-orquestador",
+                                    "choices": [
+                                        {
+                                            "index": 0,
+                                            "delta": {"content": content}
+                                        }
+                                    ]
+                                }
+                                # json.dumps protege el texto y el \n viaja seguro dentro de la cadena JSON
+                                yield f"data: {json.dumps(chunk_payload)}\n\n"
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
