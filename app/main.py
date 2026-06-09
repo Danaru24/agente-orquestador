@@ -231,21 +231,8 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                     continue # Saltamos el 'yield', suprimiendo este chunk de la interfaz
 
                             if content and not in_tool_call and not in_think:
-                                # Empaquetamos el fragmento en la estructura nativa que espera OpenWebUI
-                                chunk_payload = {
-                                    "id": "chatcmpl-mcp-agent",
-                                    "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
-                                    "model": "agente-orquestador",
-                                    "choices": [
-                                        {
-                                            "index": 0,
-                                            "delta": {"content": content}
-                                        }
-                                    ]
-                                }
-                                # json.dumps protege el texto y el \n viaja seguro dentro de la cadena JSON
-                                yield f"data: {json.dumps(chunk_payload)}\n\n"
+                                # Yield del texto puro. OpenWebUI orquesta el resto.
+                                yield content
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexión MCP...")
