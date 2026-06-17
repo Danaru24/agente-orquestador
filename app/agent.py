@@ -6,7 +6,7 @@ from typing import Annotated, TypedDict, List
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, trim_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
@@ -98,9 +98,17 @@ def create_agent(tools: list) -> CompiledStateGraph:
         Returns:
             dict: Una actualización para el estado que contiene el mensaje generado.
         """
+        # Recortar el historial para conservar solo los últimos 5 mensajes de la conversación
+        trimmed_history = trim_messages(
+            state["messages"],
+            max_tokens=5,
+            strategy="last",
+            token_counter=len,
+        )
+
         system_prompt = SystemMessage(
             content=(
-                "Eres un asistente personal experto con acceso a un servidor MCP de Kubernetes.\n"
+                "Eres un asistente personal experto con acceso a servidores MCP de Kubernetes y Zabbix.\n"
                 "Tus respuestas deben ser claras, directas y fáciles de leer.\n\n"
                 "REGLAS ESTRICTAS:\n"
                 "1. Nunca incluyas etiquetas internas como <tool_call> o <think> en tu respuesta final hacia el usuario.\n"
@@ -109,7 +117,58 @@ def create_agent(tools: list) -> CompiledStateGraph:
             )
         )
         
-        messages = [system_prompt] + state["messages"]
+        messages = [system_prompt] + trimmed_history
+
+        # Función local para escribir en llm_context_debug.log (sobreescritura)
+        def log_llm_context(final_messages: list, available_tools: list):
+            try:
+                log_path = "llm_context_debug.log"
+                with open(log_path, "w", encoding="utf-8") as f:
+                    f.write("=====================================================================\n")
+                    f.write(" SYSTEM PROMPT\n")
+                    f.write("=====================================================================\n")
+                    system_msg = next((m.content for m in final_messages if isinstance(m, SystemMessage)), "No system prompt found")
+                    f.write(f"{system_msg}\n\n")
+                    
+                    f.write("=====================================================================\n")
+                    f.write(" AVAILABLE TOOLS\n")
+                    f.write("=====================================================================\n")
+                    for i, tool in enumerate(available_tools, 1):
+                        f.write(f"Tool #{i}:\n")
+                        f.write(f"  Name: {tool.name}\n")
+                        f.write(f"  Description: {tool.description}\n")
+                        if hasattr(tool, "args"):
+                            f.write(f"  Arguments Schema: {json.dumps(tool.args, indent=2)}\n")
+                        f.write("-" * 50 + "\n")
+                    f.write("\n")
+                    
+                    f.write("=====================================================================\n")
+                    f.write(" TRIMMED CONVERSATION HISTORY (LAST 5 MESSAGES)\n")
+                    f.write("=====================================================================\n")
+                    history_messages = [m for m in final_messages if not isinstance(m, SystemMessage)]
+                    for idx, msg in enumerate(history_messages):
+                        msg_type = type(msg).__name__
+                        f.write(f"[{msg_type}] ({idx+1}/{len(history_messages)}):\n")
+                        f.write(f"{msg.content}\n")
+                        if hasattr(msg, "tool_calls") and msg.tool_calls:
+                            f.write(f"  Tool Calls: {json.dumps(msg.tool_calls, indent=2)}\n")
+                        f.write("-" * 80 + "\n")
+                    f.write("\n")
+                    
+                    f.write("=====================================================================\n")
+                    f.write(" LAST USER QUESTION\n")
+                    f.write("=====================================================================\n")
+                    user_msgs = [m for m in final_messages if type(m).__name__ == "HumanMessage" or getattr(m, "type", "") == "human"]
+                    if user_msgs:
+                        f.write(f"{user_msgs[-1].content}\n")
+                    else:
+                        f.write("No user question found in this context.\n")
+            except Exception as e:
+                print(f"[ERROR] Fallo al escribir en llm_context_debug.log: {e}")
+
+        # Ejecutamos el log del contexto antes de invocar al LLM
+        log_llm_context(messages, tools)
+
         response = llm_with_tools.invoke(messages)
         
         # Parseo manual para modelos locales que devuelven tool calls (formato XML o JSON crudo al inicio)

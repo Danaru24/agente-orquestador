@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 # Importaciones del cliente MCP oficial y adaptadores
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 from langchain_mcp_adapters.tools import load_mcp_tools
 
 # Cargamos las variables de entorno desde el archivo .env si existe localmente
@@ -153,9 +154,14 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
             # Conectamos con cada servidor de la lista usando la URL tal cual
             for url in MCP_SERVERS:
                 try:
-                    # 1. Abrimos conexión SSE con la URL exacta (sin modificaciones)
-                    streams = await stack.enter_async_context(sse_client(url=url, timeout=None))
-                    read_stream, write_stream = streams
+                    if url.endswith("/sse"):
+                        # 1. Abrimos conexión SSE con la URL exacta (sin modificaciones)
+                        streams = await stack.enter_async_context(sse_client(url=url, timeout=None))
+                        read_stream, write_stream = streams
+                    else:
+                        # 1. Abrimos conexión Streamable HTTP con la URL exacta (sin modificaciones)
+                        streams = await stack.enter_async_context(streamable_http_client(url=url))
+                        read_stream, write_stream, _ = streams
 
                     # 2. Inicializamos la sesión para este servidor
                     session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
