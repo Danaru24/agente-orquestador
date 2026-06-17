@@ -113,7 +113,12 @@ def create_agent(tools: list) -> CompiledStateGraph:
                 "- No inventes información, estados, ni respuestas si no han sido recuperados explícitamente por una herramienta MCP.\n"
                 "- NO actúes como una guía de comandos. Está estrictamente prohibido devolver comandos de Kubernetes o instrucciones de terminal en formato de texto a menos que el usuario te lo pida explícitamente. Tu deber es EJECUTAR las herramientas del MCP para interactuar con el clúster, no enseñarle comandos al usuario.\n"
                 "- Si no cuentas con una herramienta MCP para resolver la petición, indícalo de manera directa y concreta.\n"
-                "- Mantén siempre una estructura visual limpia, fácil de leer y con información sumamente concreta (usa viñetas o tablas cortas si es necesario), evitando rodeos o texto innecesario."
+                "- Mantén siempre una estructura visual limpia, fácil de leer y con información sumamente concreta (usa viñetas o tablas cortas si es necesario), evitando rodeos o texto innecesario.\n\n"
+                "FORMATO DE SALIDA: Está estrictamente prohibido usar bloques de código Markdown (```) para listar información de infraestructura, estado de recursos o inventarios. Utiliza únicamente texto plano con viñetas (-) o tablas simples. Los bloques de código SOLO deben usarse si el usuario pide explícitamente un script, un archivo YAML o código fuente.\n\n"
+                "RAZONAMIENTO DE DOMINIO: Tienes acceso a dos entornos distintos: Kubernetes/OpenShift y Zabbix. \n"
+                "- Términos como 'Proyecto', 'Namespace', 'Pod', 'Deployment', 'Log' o 'Cluster' pertenecen a KUBERNETES. \n"
+                "- Términos como 'Host', 'Grupo de hosts', 'Item', 'Trigger' o 'Métrica de red' pertenecen a ZABBIX.\n"
+                "REGLA DE ORO: Si el usuario usa un término ambiguo (como 'inventario') o no estás 100% seguro de a qué entorno se refiere, DEBES PREGUNTAR y pedir aclaración antes de ejecutar cualquier herramienta. No asumas el entorno."
             )
         )
         
