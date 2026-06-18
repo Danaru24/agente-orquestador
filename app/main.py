@@ -149,7 +149,8 @@ def clean_mcp_output(text: str) -> str:
         return re.sub(r'(?<!app=)(?<!pod-template-hash=)\b[a-f0-9]{10,}\b', '[hash]', text)
 
     # Columnas que deseamos excluir por completo
-    cols_to_exclude = {"READINESS GATES", "NOMINATED NODE", "AGE"}
+    # Incluye variantes con espacios (tal como aparecen en las cabeceras de kubectl)
+    cols_to_exclude = {"READINESS GATES", "NOMINATED NODE", "NODE", "AGE", "IP"}
     col_ranges = []
     current_pos = 0
     for col in columns:
@@ -273,13 +274,15 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                     # Limpieza de tablas y columnas innecesarias (Pre-procesamiento)
                                     text_content = clean_mcp_output(text_content)
 
-                                    # Truncamiento de salidas masivas (Output Clipping)
-                                    if len(text_content) > 2000:
+                                    # Truncamiento de seguridad extrema (Output Clipping)
+                                    # Límite elevado a 30 000 caracteres para permitir
+                                    # tablas completas de pods/resources tras la limpieza de columnas.
+                                    if len(text_content) > 30000:
                                         text_content = (
-                                            text_content[:2000] +
-                                            "\n\n[SYSTEM] La salida anterior ha sido truncada porque superó el límite de contexto. "
-                                            "Refina la búsqueda usando argumentos de filtrado (namespace, labelSelector, etc.) "
-                                            "antes de continuar. NO repitas esta instrucción al usuario."
+                                            text_content[:30000] +
+                                            "\n\n[SYSTEM] Salida truncada en 30 000 caracteres por seguridad. "
+                                            "Refina la búsqueda con filtros adicionales si necesitas más datos. "
+                                            "NO menciones este mensaje al usuario."
                                         )
 
                                     return text_content, result
@@ -352,23 +355,50 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexiones MCP...")
 
-                # Al finalizar el flujo, limpiamos el historial persistente de la sesión (checkpointer)
-                # para conservar únicamente los HumanMessages y los AIMessages finales (sin tool_calls)
+                # ── Limpieza del checkpointer al finalizar el turno ──────────────
+                # REGLA: conservar en la memoria persistente ÚNICAMENTE:
+                #   - HumanMessage  (la pregunta del usuario)
+                #   - AIMessage con contenido textual Y sin tool_calls  (la respuesta final)
+                # Todo lo demás (ToolMessage y AIMessage intermedios con tool_calls) se elimina.
                 try:
                     state = await agent_executor.aget_state(config)
                     all_messages = state.values.get("messages", [])
-                    
+
                     messages_to_remove = []
                     for msg in all_messages:
-                        if type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool":
+                        msg_type = type(msg).__name__
+                        is_tool_msg   = (msg_type == "ToolMessage" or getattr(msg, "type", "") == "tool")
+                        is_ai_msg     = (msg_type == "AIMessage"    or getattr(msg, "type", "") == "ai")
+                        has_tool_calls = bool(getattr(msg, "tool_calls", None))
+                        has_content    = bool(getattr(msg, "content", ""))
+
+                        if is_tool_msg:
+                            # ToolMessage: siempre borrar del checkpointer
                             messages_to_remove.append(RemoveMessage(id=msg.id))
-                        elif type(msg).__name__ == "AIMessage" or getattr(msg, "type", "") == "ai":
-                            if msg.tool_calls:
-                                messages_to_remove.append(RemoveMessage(id=msg.id))
-                    
+                            print(f"[MEMORY] ELIMINAR ToolMessage id={msg.id}")
+                        elif is_ai_msg and has_tool_calls:
+                            # AIMessage intermedio (contiene tool_calls): borrar
+                            messages_to_remove.append(RemoveMessage(id=msg.id))
+                            print(f"[MEMORY] ELIMINAR AIMessage intermedio (tool_calls) id={msg.id}")
+                        elif is_ai_msg and not has_tool_calls and not has_content:
+                            # AIMessage vacío sin tool_calls (edge case): borrar
+                            messages_to_remove.append(RemoveMessage(id=msg.id))
+                            print(f"[MEMORY] ELIMINAR AIMessage vacío id={msg.id}")
+                        else:
+                            # HumanMessage o AIMessage final con contenido: CONSERVAR
+                            print(f"[MEMORY] CONSERVAR {msg_type} id={msg.id} | contenido: {str(getattr(msg, 'content', ''))[:60]!r}")
+
                     if messages_to_remove:
                         print(f"[INFO] Compresión de memoria: eliminando {len(messages_to_remove)} mensajes intermedios del checkpointer...")
                         await agent_executor.aupdate_state(config, {"messages": messages_to_remove})
+                        # Verificación: loguear el estado final del checkpointer
+                        final_state = await agent_executor.aget_state(config)
+                        final_msgs  = final_state.values.get("messages", [])
+                        print(f"[MEMORY] Estado del checkpointer tras limpieza: {len(final_msgs)} mensajes")
+                        for fm in final_msgs:
+                            print(f"[MEMORY]   [{type(fm).__name__}] {str(getattr(fm, 'content', ''))[:80]!r}")
+                    else:
+                        print("[MEMORY] Sin mensajes intermedios que limpiar en el checkpointer.")
                 except Exception as clean_err:
                     print(f"[WARNING] No se pudo limpiar el historial persistente: {clean_err}")
 
