@@ -216,38 +216,61 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
             in_tool_call = False
             in_think = False
 
-            async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
-                if event["event"] == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"]
-                    content = chunk.content
-                    if content:
-                        # Ocultar tags de pensamiento
-                        if "<think>" in content:
-                            in_think = True
-                        if in_think:
-                            if "</think>" in content:
-                                in_think = False
-                                content = content.split("</think>")[-1]
-                            else:
-                                continue
+            try:
+                # Log de tamaño de payload (pre-ejecución)
+                tools_payload_desc = str([{ "name": t.name, "description": t.description, "args": getattr(t, "args", {}) } for t in all_tools])
+                approx_system_prompt_len = 1000  # Estimación del System Prompt estricto
+                total_approx_chars = len(tools_payload_desc) + approx_system_prompt_len
+                print(f"[DEBUG] [PAYLOAD_LOG] Cantidad exacta de herramientas inyectadas: {len(all_tools)}")
+                print(f"[DEBUG] [PAYLOAD_LOG] Longitud aproximada del payload de herramientas: {len(tools_payload_desc)} caracteres")
+                print(f"[DEBUG] [PAYLOAD_LOG] Longitud aproximada de (herramientas + System Prompt): {total_approx_chars} caracteres")
 
-                        # Ocultar tags de llamadas a herramientas
-                        if "<tool_call>" in content:
-                            in_tool_call = True
+                async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
+                    if event["event"] == "on_chat_model_stream":
+                        chunk = event["data"]["chunk"]
+                        content = chunk.content
+                        if content:
+                            # Ocultar tags de pensamiento
+                            if "<think>" in content:
+                                in_think = True
+                            if in_think:
+                                if "</think>" in content:
+                                    in_think = False
+                                    content = content.split("</think>")[-1]
+                                else:
+                                    continue
 
-                        if in_tool_call:
-                            if "</tool_call>" in content:
-                                in_tool_call = False
-                                content = content.split("</tool_call>")[-1]
-                            else:
-                                continue
+                            # Ocultar tags de llamadas a herramientas
+                            if "<tool_call>" in content:
+                                in_tool_call = True
 
-                        if content and not in_tool_call and not in_think:
-                            safe_content = json.dumps(content)
-                            yield f"data: {safe_content}\n\n"
-                            await asyncio.sleep(0.01)
+                            if in_tool_call:
+                                if "</tool_call>" in content:
+                                    in_tool_call = False
+                                    content = content.split("</tool_call>")[-1]
+                                else:
+                                    continue
 
-            print("[INFO] Flujo del agente finalizado. Cerrando conexiones MCP...")
+                            if content and not in_tool_call and not in_think:
+                                safe_content = json.dumps(content)
+                                yield f"data: {safe_content}\n\n"
+                                await asyncio.sleep(0.01)
+
+                print("[INFO] Flujo del agente finalizado. Cerrando conexiones MCP...")
+
+            except Exception as e:
+                err_msg = str(e)
+                exc_type = type(e).__name__
+                print(f"[ERROR CRÍTICO] [INFERENCE_ENGINE_FAIL] Excepción capturada en la ejecución del agente ({exc_type}): {err_msg}")
+                traceback.print_exc(file=sys.stdout)
+                
+                # Cierre limpio de sesiones y conexiones MCP para evitar fugas de memoria
+                print("[INFO] Cerrando de forma limpia las conexiones MCP...")
+                await stack.aclose()
+                
+                # Degradación elegante con mensaje amigable al usuario
+                friendly_error = "Error interno en el motor de inferencia. Es posible que la consulta o las herramientas hayan excedido la capacidad actual del modelo."
+                yield f"data: {json.dumps(friendly_error)}\n\n"
                 
     except ExceptionGroup as eg:
         # Esto atrapará los errores dentro del TaskGroup en Python 3.11+
