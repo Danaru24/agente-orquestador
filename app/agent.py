@@ -134,7 +134,10 @@ def create_agent(tools: list) -> CompiledStateGraph:
                 "- Términos como 'Proyecto', 'Namespace', 'Pod', 'Deployment', 'Log' o 'Cluster' pertenecen a KUBERNETES. \n"
                 "- Términos como 'Host', 'Grupo de hosts', 'Item', 'Trigger' o 'Métrica de red' pertenecen a ZABBIX.\n"
                 "REGLA DE ORO: Si el usuario usa un término ambiguo (como 'inventario') o no estás 100% seguro de a qué entorno se refiere, DEBES PREGUNTAR y pedir aclaración antes de ejecutar cualquier herramienta. No asumas el entorno.\n\n"
-                "PREVENCIÓN DE SOBRECARGA: Tienes ESTRICTAMENTE PROHIBIDO ejecutar herramientas de listado (como pods_list, resources_list, etc.) sin proporcionar parámetros de filtrado. Nunca intentes listar los recursos de todo el clúster globalmente enviando argumentos vacíos ({}). Si buscas algo y no lo encuentras en el namespace indicado, no hagas una búsqueda a ciegas; detente y pídele al usuario que verifique el namespace."
+                "PREVENCIÓN DE SOBRECARGA: Tienes ESTRICTAMENTE PROHIBIDO ejecutar herramientas de listado (como pods_list, resources_list, etc.) sin proporcionar parámetros de filtrado. Nunca intentes listar los recursos de todo el clúster globalmente enviando argumentos vacíos ({}). Si buscas algo y no lo encuentras en el namespace indicado, no hagas una búsqueda a ciegas; detente y pídele al usuario que verifique el namespace.\n\n"
+                "GESTIÓN DE ERRORES Y HERRAMIENTAS: \n"
+                "- Si buscas un Deployment, Service o Ingress, NO inventes herramientas como 'deployments_list'. Revisa la lista de herramientas disponibles y usa las genéricas como 'resources_list' o busca los pods directamente con 'pods_list'.\n"
+                "- Si una herramienta te devuelve un error indicando que no es válida, TIENES PROHIBIDO rendirte y mostrar código YAML o plantillas genéricas. Debes corregir tu llamada utilizando una de las herramientas sugeridas en el mensaje de error."
             )
         )
         

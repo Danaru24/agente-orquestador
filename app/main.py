@@ -20,6 +20,7 @@ from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from langchain_mcp_adapters.tools import load_mcp_tools
+from langchain_core.messages import RemoveMessage
 
 # Cargamos las variables de entorno desde el archivo .env si existe localmente
 load_dotenv()
@@ -345,6 +346,26 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                 await asyncio.sleep(0.01)
 
                 print("[INFO] Flujo del agente finalizado. Cerrando conexiones MCP...")
+
+                # Al finalizar el flujo, limpiamos el historial persistente de la sesión (checkpointer)
+                # para conservar únicamente los HumanMessages y los AIMessages finales (sin tool_calls)
+                try:
+                    state = await agent_executor.aget_state(config)
+                    all_messages = state.values.get("messages", [])
+                    
+                    messages_to_remove = []
+                    for msg in all_messages:
+                        if type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool":
+                            messages_to_remove.append(RemoveMessage(id=msg.id))
+                        elif type(msg).__name__ == "AIMessage" or getattr(msg, "type", "") == "ai":
+                            if msg.tool_calls:
+                                messages_to_remove.append(RemoveMessage(id=msg.id))
+                    
+                    if messages_to_remove:
+                        print(f"[INFO] Compresión de memoria: eliminando {len(messages_to_remove)} mensajes intermedios del checkpointer...")
+                        await agent_executor.aupdate_state(config, {"messages": messages_to_remove})
+                except Exception as clean_err:
+                    print(f"[WARNING] No se pudo limpiar el historial persistente: {clean_err}")
 
             except Exception as e:
                 err_msg = str(e)
