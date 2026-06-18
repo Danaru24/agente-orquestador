@@ -2,6 +2,7 @@ import os
 import asyncio
 import uuid
 import httpx
+import httpcore
 import traceback
 import sys
 import re
@@ -418,13 +419,21 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 
     except ExceptionGroup as eg:
         # Esto atrapará los errores dentro del TaskGroup en Python 3.11+
-        print("[ERROR CRÍTICO] Excepciones múltiples en el TaskGroup de MCP:")
+        # Verificamos si los errores son puramente de desconexión remota SSE
+        has_critical_error = False
         for exc in eg.exceptions:
-            print(f" -> Sub-excepción: {type(exc).__name__}: {exc}")
-            # Esto imprimirá la línea exacta de la librería que está fallando
-            traceback.print_exception(type(exc), exc, exc.__traceback__)
+            if isinstance(exc, (httpx.RemoteProtocolError, httpcore.RemoteProtocolError)):
+                print("[DEBUG] Conexión SSE cerrada por el servidor remoto de forma abrupta (Ignorado).")
+            else:
+                has_critical_error = True
+                print(f"[ERROR CRÍTICO] Sub-excepción en TaskGroup: {type(exc).__name__}: {exc}")
+                traceback.print_exception(type(exc), exc, exc.__traceback__)
         
-        yield format_sse("[ERROR: Fallo de conexión SSE con MCP. Revisa los logs del orquestador]")
+        if has_critical_error:
+            yield format_sse("[ERROR: Fallo de conexión SSE con MCP. Revisa los logs del orquestador]")
+
+    except (httpx.RemoteProtocolError, httpcore.RemoteProtocolError):
+        print("[DEBUG] Conexión SSE cerrada por el servidor remoto de forma abrupta (Ignorado).")
 
     except Exception as e:
         print(f"[ERROR] Fallo general en el flujo del cliente MCP / LangGraph: {e}")
