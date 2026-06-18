@@ -186,8 +186,17 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                                             mcp_args[key] = value
                                         except TypeError:
                                             pass
+                                    # Interceptor de argumentos vacíos para pods_list
+                                    if tool_name == "pods_list" and not mcp_args.get("namespace"):
+                                        return "Error: No se permite listar pods sin especificar un namespace.", None
+
                                     result = await bound_session.call_tool(tool_name, arguments=mcp_args)
                                     text_content = str(result)
+
+                                    # Truncamiento de salidas masivas (Output Clipping)
+                                    if len(text_content) > 2000:
+                                        text_content = text_content[:2000] + "\n\n...[ALERTA DE SISTEMA: SALIDA TRUNCADA POR EXCESO DE LONGITUD]. Has recibido demasiados resultados y la lista se ha cortado para proteger la memoria. DEBES refinar tu búsqueda utilizando argumentos de filtrado (como 'namespace' o 'labelSelector')."
+
                                     return text_content, result
                                 except Exception as e:
                                     print(f"[ERROR] Excepción en herramienta {tool_name}: {e}")

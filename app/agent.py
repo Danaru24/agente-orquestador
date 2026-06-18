@@ -118,7 +118,8 @@ def create_agent(tools: list) -> CompiledStateGraph:
                 "RAZONAMIENTO DE DOMINIO: Tienes acceso a dos entornos distintos: Kubernetes/OpenShift y Zabbix. \n"
                 "- Términos como 'Proyecto', 'Namespace', 'Pod', 'Deployment', 'Log' o 'Cluster' pertenecen a KUBERNETES. \n"
                 "- Términos como 'Host', 'Grupo de hosts', 'Item', 'Trigger' o 'Métrica de red' pertenecen a ZABBIX.\n"
-                "REGLA DE ORO: Si el usuario usa un término ambiguo (como 'inventario') o no estás 100% seguro de a qué entorno se refiere, DEBES PREGUNTAR y pedir aclaración antes de ejecutar cualquier herramienta. No asumas el entorno."
+                "REGLA DE ORO: Si el usuario usa un término ambiguo (como 'inventario') o no estás 100% seguro de a qué entorno se refiere, DEBES PREGUNTAR y pedir aclaración antes de ejecutar cualquier herramienta. No asumas el entorno.\n\n"
+                "PREVENCIÓN DE SOBRECARGA: Tienes ESTRICTAMENTE PROHIBIDO ejecutar herramientas de listado (como pods_list, resources_list, etc.) sin proporcionar parámetros de filtrado. Nunca intentes listar los recursos de todo el clúster globalmente enviando argumentos vacíos ({}). Si buscas algo y no lo encuentras en el namespace indicado, no hagas una búsqueda a ciegas; detente y pídele al usuario que verifique el namespace."
             )
         )
         
