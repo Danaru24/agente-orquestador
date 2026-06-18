@@ -6,7 +6,7 @@ from typing import Annotated, TypedDict, List
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import BaseMessage, SystemMessage, AIMessage, trim_messages
+from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.checkpoint.memory import MemorySaver
@@ -98,43 +98,33 @@ def create_agent(tools: list) -> CompiledStateGraph:
         Returns:
             dict: Una actualización para el estado que contiene el mensaje generado.
         """
-        # Recortar el historial para conservar solo los últimos 5 mensajes de la conversación
-        trimmed_history = trim_messages(
-            state["messages"],
-            max_tokens=5,
-            strategy="last",
-            token_counter=len,
-        )
-
-        # Filtrado de historial: pasar al LLM solo HumanMessage y AIMessage finales.
-        # ToolMessages e AIMessages intermedios (con tool_calls) se descartan del contexto
-        # activo igual que se descartan del checkpointer al finalizar el turno.
-        clean_history = [
-            msg for msg in trimmed_history
+        # ── Ventana deslizante de memoria ──────────────────────────────────
+        # PASO 1: Filtrar primero — descartar ToolMessages y AIMessages con
+        # tool_calls (mensajes intermedios de ejecución de herramientas).
+        # De esta forma la ventana de 5 siempre contiene turnos reales Human↔AI.
+        all_msgs = state["messages"]
+        clean_history_full = [
+            msg for msg in all_msgs
             if not (type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool")
             and not (
                 (type(msg).__name__ == "AIMessage" or getattr(msg, "type", "") == "ai")
                 and getattr(msg, "tool_calls", None)
             )
         ]
+        # PASO 2: Tomar los últimos 5 mensajes válidos (ventana deslizante).
+        clean_history = clean_history_full[-5:]
 
         system_prompt = SystemMessage(
             content=(
-                "Eres un asistente técnico especializado que opera EXCLUSIVAMENTE como un orquestador de herramientas a través de los servidores MCP conectados. \n"
-                "Tus directrices de comportamiento son absolutas:\n"
-                "- No inventes información, estados, ni respuestas si no han sido recuperados explícitamente por una herramienta MCP.\n"
-                "- NO actúes como una guía de comandos. Está estrictamente prohibido devolver comandos de Kubernetes o instrucciones de terminal en formato de texto a menos que el usuario te lo pida explícitamente. Tu deber es EJECUTAR las herramientas del MCP para interactuar con el clúster, no enseñarle comandos al usuario.\n"
-                "- Si no cuentas con una herramienta MCP para resolver la petición, indícalo de manera directa y concreta.\n"
-                "- Mantén siempre una estructura visual limpia, fácil de leer y con información sumamente concreta (usa viñetas o tablas cortas si es necesario), evitando rodeos o texto innecesario.\n\n"
-                "FORMATO DE SALIDA: Está estrictamente prohibido usar bloques de código Markdown (```) para listar información de infraestructura, estado de recursos o inventarios. Utiliza únicamente texto plano con viñetas (-) o tablas simples. Los bloques de código SOLO deben usarse si el usuario pide explícitamente un script, un archivo YAML o código fuente.\n\n"
-                "RAZONAMIENTO DE DOMINIO: Tienes acceso a dos entornos distintos: Kubernetes/OpenShift y Zabbix. \n"
-                "- Términos como 'Proyecto', 'Namespace', 'Pod', 'Deployment', 'Log' o 'Cluster' pertenecen a KUBERNETES. \n"
-                "- Términos como 'Host', 'Grupo de hosts', 'Item', 'Trigger' o 'Métrica de red' pertenecen a ZABBIX.\n"
-                "REGLA DE ORO: Si el usuario usa un término ambiguo (como 'inventario') o no estás 100% seguro de a qué entorno se refiere, DEBES PREGUNTAR y pedir aclaración antes de ejecutar cualquier herramienta. No asumas el entorno.\n\n"
-                "PREVENCIÓN DE SOBRECARGA: Tienes ESTRICTAMENTE PROHIBIDO ejecutar herramientas de listado (como pods_list, resources_list, etc.) sin proporcionar parámetros de filtrado. Nunca intentes listar los recursos de todo el clúster globalmente enviando argumentos vacíos ({}). Si buscas algo y no lo encuentras en el namespace indicado, no hagas una búsqueda a ciegas; detente y pídele al usuario que verifique el namespace.\n\n"
-                "GESTIÓN DE ERRORES Y HERRAMIENTAS: \n"
-                "- Si buscas un Deployment, Service o Ingress, NO inventes herramientas como 'deployments_list'. Revisa la lista de herramientas disponibles y usa las genéricas como 'resources_list' o busca los pods directamente con 'pods_list'.\n"
-                "- Si una herramienta te devuelve un error indicando que no es válida, TIENES PROHIBIDO rendirte y mostrar código YAML o plantillas genéricas. Debes corregir tu llamada utilizando una de las herramientas sugeridas en el mensaje de error."
+                "Eres un orquestador técnico de infraestructura con acceso a Kubernetes/OpenShift y Zabbix vía MCP.\n"
+                "REGLAS CRÍTICAS:\n"
+                "1. NUNCA INVENTES: Usa las herramientas para responder. Si no tienes la herramienta adecuada, indícalo.\n"
+                "2. FILTRADO OBLIGATORIO: Prohibido ejecutar listados globales (ej. pods_list sin argumentos). "
+                "Si necesitas buscar recursos, pide siempre el namespace o host primero.\n"
+                "3. FORMATO LIMPIO: Usa texto plano y viñetas. NO uses bloques de código Markdown (```) "
+                "a menos que el usuario pida explícitamente un script o YAML.\n"
+                "4. CORRECCIÓN AUTOMÁTICA: Si una herramienta falla, lee el error y usa la herramienta correcta. "
+                "No te disculpes ofreciendo plantillas YAML genéricas."
             )
         )
         
