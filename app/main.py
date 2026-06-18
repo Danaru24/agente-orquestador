@@ -319,7 +319,7 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
                 print(f"[DEBUG] [PAYLOAD_LOG] Longitud aproximada del payload de herramientas: {len(tools_payload_desc)} caracteres")
                 print(f"[DEBUG] [PAYLOAD_LOG] Longitud aproximada de (herramientas + System Prompt): {total_approx_chars} caracteres")
 
-                async for event in agent_executor.astream_events(inputs, config=config, version="v2"):
+                async for event in agent_executor.astream_events(inputs, config={**config, "recursion_limit": 8}, version="v2"):
                     if event["event"] == "on_chat_model_stream":
                         chunk = event["data"]["chunk"]
                         content = chunk.content

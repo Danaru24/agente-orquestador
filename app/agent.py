@@ -98,21 +98,39 @@ def create_agent(tools: list) -> CompiledStateGraph:
         Returns:
             dict: Una actualización para el estado que contiene el mensaje generado.
         """
-        # ── Ventana deslizante de memoria ──────────────────────────────────
-        # PASO 1: Filtrar primero — descartar ToolMessages y AIMessages con
-        # tool_calls (mensajes intermedios de ejecución de herramientas).
-        # De esta forma la ventana de 5 siempre contiene turnos reales Human↔AI.
+        # ── Ventana deslizante de memoria (scope correcto) ─────────────────
+        # REGLA FUNDAMENTAL:
+        #   - Los mensajes del TURNO ACTUAL (desde el último HumanMessage hasta
+        #     el final) se pasan siempre INTACTOS al LLM. El modelo necesita ver
+        #     los ToolMessages y sus propios tool_calls para no entrar en bucle.
+        #   - Los mensajes de TURNOS ANTERIORES se filtran (solo Human ↔ AI
+        #     final) y se limitan a los últimos 5 turnos válidos para reducir
+        #     el tamaño del contexto.
         all_msgs = state["messages"]
-        clean_history_full = [
-            msg for msg in all_msgs
+
+        # Localizar el índice del último HumanMessage (inicio del turno actual)
+        current_turn_start = 0
+        for i in range(len(all_msgs) - 1, -1, -1):
+            if type(all_msgs[i]).__name__ == "HumanMessage" or getattr(all_msgs[i], "type", "") == "human":
+                current_turn_start = i
+                break
+
+        # Historial anterior (turnos pasados): se filtra y se limita a 5 turnos
+        past_msgs = all_msgs[:current_turn_start]
+        past_clean = [
+            msg for msg in past_msgs
             if not (type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool")
             and not (
                 (type(msg).__name__ == "AIMessage" or getattr(msg, "type", "") == "ai")
                 and getattr(msg, "tool_calls", None)
             )
-        ]
-        # PASO 2: Tomar los últimos 5 mensajes válidos (ventana deslizante).
-        clean_history = clean_history_full[-5:]
+        ][-5:]  # ventana deslizante de 5 turnos Human↔AI
+
+        # Turno actual (desde el último HumanMessage): se pasa íntegro
+        current_turn_msgs = all_msgs[current_turn_start:]
+
+        # Contexto final que recibe el LLM en esta invocación
+        active_context = past_clean + current_turn_msgs
 
         system_prompt = SystemMessage(
             content=(
@@ -124,11 +142,14 @@ def create_agent(tools: list) -> CompiledStateGraph:
                 "3. FORMATO LIMPIO: Usa texto plano y viñetas. NO uses bloques de código Markdown (```) "
                 "a menos que el usuario pida explícitamente un script o YAML.\n"
                 "4. CORRECCIÓN AUTOMÁTICA: Si una herramienta falla, lee el error y usa la herramienta correcta. "
-                "No te disculpes ofreciendo plantillas YAML genéricas."
+                "No te disculpes ofreciendo plantillas YAML genéricas.\n"
+                "5. ANTI-BUCLES: Tienes estrictamente prohibido llamar a la misma herramienta dos veces seguidas "
+                "para la misma petición. Una vez que llames a una herramienta y recibas su resultado, DEBES analizar "
+                "esa información y responder inmediatamente al usuario. NO vuelvas a intentar ejecutar herramientas."
             )
         )
         
-        messages = [system_prompt] + clean_history
+        messages = [system_prompt] + active_context
 
         # Función local para escribir en llm_context_debug.log (sobreescritura).
         # SOLO escribe: System Prompt · marcador de herramientas · historial limpio · última pregunta.
