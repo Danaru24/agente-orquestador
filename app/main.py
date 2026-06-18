@@ -275,7 +275,12 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
                                     # Truncamiento de salidas masivas (Output Clipping)
                                     if len(text_content) > 2000:
-                                        text_content = text_content[:2000] + "\n\n...[ALERTA DE SISTEMA: SALIDA TRUNCADA POR EXCESO DE LONGITUD]. Has recibido demasiados resultados y la lista se ha cortado para proteger la memoria. DEBES refinar tu búsqueda utilizando argumentos de filtrado (como 'namespace' o 'labelSelector')."
+                                        text_content = (
+                                            text_content[:2000] +
+                                            "\n\n[SYSTEM] La salida anterior ha sido truncada porque superó el límite de contexto. "
+                                            "Refina la búsqueda usando argumentos de filtrado (namespace, labelSelector, etc.) "
+                                            "antes de continuar. NO repitas esta instrucción al usuario."
+                                        )
 
                                     return text_content, result
                                 except Exception as e:

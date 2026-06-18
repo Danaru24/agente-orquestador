@@ -106,20 +106,17 @@ def create_agent(tools: list) -> CompiledStateGraph:
             token_counter=len,
         )
 
-        # Compresión de historial: Vaciar el contenido de ToolMessage ya procesados
-        for idx in range(len(trimmed_history)):
-            msg = trimmed_history[idx]
-            if type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool":
-                # Si hay algún AIMessage posterior en el historial recortado, significa que ya fue procesado
-                has_subsequent_ai = False
-                for j in range(idx + 1, len(trimmed_history)):
-                    next_msg = trimmed_history[j]
-                    if type(next_msg).__name__ == "AIMessage" or getattr(next_msg, "type", "") == "ai":
-                        has_subsequent_ai = True
-                        break
-                
-                if has_subsequent_ai:
-                    msg.content = "[Salida de herramienta omitida para ahorrar contexto. El modelo ya procesó esta información]"
+        # Filtrado de historial: pasar al LLM solo HumanMessage y AIMessage finales.
+        # ToolMessages e AIMessages intermedios (con tool_calls) se descartan del contexto
+        # activo igual que se descartan del checkpointer al finalizar el turno.
+        clean_history = [
+            msg for msg in trimmed_history
+            if not (type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool")
+            and not (
+                (type(msg).__name__ == "AIMessage" or getattr(msg, "type", "") == "ai")
+                and getattr(msg, "tool_calls", None)
+            )
+        ]
 
         system_prompt = SystemMessage(
             content=(
@@ -141,85 +138,70 @@ def create_agent(tools: list) -> CompiledStateGraph:
             )
         )
         
-        messages = [system_prompt] + trimmed_history
+        messages = [system_prompt] + clean_history
 
-        # Función local para escribir en llm_context_debug.log (sobreescritura)
-        def log_llm_context(final_messages: list, available_tools: list):
+        # Función local para escribir en llm_context_debug.log (sobreescritura).
+        # SOLO escribe: System Prompt · marcador de herramientas · historial limpio · última pregunta.
+        # Los esquemas JSON de herramientas se omiten completamente para mantener el archivo legible.
+        def log_llm_context(final_messages: list, num_tools: int):
             try:
                 log_path = "llm_context_debug.log"
-                lines = []
-                lines.append("=====================================================================\n")
-                lines.append(" SYSTEM PROMPT\n")
-                lines.append("=====================================================================\n")
-                system_msg = next((m.content for m in final_messages if isinstance(m, SystemMessage)), "No system prompt found")
-                lines.append(f"{system_msg}\n\n")
-                
-                lines.append("=====================================================================\n")
-                lines.append(" AVAILABLE TOOLS\n")
-                lines.append("=====================================================================\n")
-                for i, tool in enumerate(available_tools, 1):
-                    lines.append(f"Tool #{i}:\n")
-                    lines.append(f"  Name: {tool.name}\n")
-                    lines.append(f"  Description: {tool.description}\n")
-                    if hasattr(tool, "args"):
-                        lines.append(f"  Arguments Schema: {json.dumps(tool.args, indent=2)}\n")
-                    lines.append("-" * 50 + "\n")
-                lines.append("\n")
-                
-                lines.append("=====================================================================\n")
-                lines.append(" TRIMMED CONVERSATION HISTORY (LAST 5 MESSAGES)\n")
-                lines.append("=====================================================================\n")
-                history_messages = [m for m in final_messages if not isinstance(m, SystemMessage)]
-                for idx, msg in enumerate(history_messages):
-                    msg_type = type(msg).__name__
-                    lines.append(f"[{msg_type}] ({idx+1}/{len(history_messages)}):\n")
-                    lines.append(f"{msg.content}\n")
-                    if hasattr(msg, "tool_calls") and msg.tool_calls:
-                        lines.append(f"  Tool Calls: {json.dumps(msg.tool_calls, indent=2)}\n")
-                    lines.append("-" * 80 + "\n")
-                lines.append("\n")
-                
-                lines.append("=====================================================================\n")
-                lines.append(" LAST USER QUESTION\n")
-                lines.append("=====================================================================\n")
-                user_msgs = [m for m in final_messages if type(m).__name__ == "HumanMessage" or getattr(m, "type", "") == "human"]
-                if user_msgs:
-                    lines.append(f"{user_msgs[-1].content}\n")
-                else:
-                    lines.append("No user question found in this context.\n")
+                SEP = "=====================================================================\n"
 
-                full_log_str = "".join(lines)
-                
-                # Filtrar el bloque de herramientas para abreviar el log
-                tools_start_marker = "=====================================================================\n AVAILABLE TOOLS"
-                history_start_marker = "=====================================================================\n TRIMMED CONVERSATION HISTORY"
-                
-                if tools_start_marker in full_log_str and history_start_marker in full_log_str:
-                    parts = full_log_str.split(tools_start_marker, 1)
-                    before_tools = parts[0]
-                    after_tools_part = parts[1]
-                    
-                    history_parts = after_tools_part.split(history_start_marker, 1)
-                    after_history = history_parts[1]
-                    
-                    cleaned_log_str = (
-                        before_tools +
-                        tools_start_marker + "\n" +
-                        "=====================================================================\n" +
-                        "... [LISTA DE HERRAMIENTAS MCP OMITIDAS EN EL LOG POR BREVEDAD] ...\n\n" +
-                        history_start_marker +
-                        after_history
+                # 1. System Prompt
+                system_content = next(
+                    (m.content for m in final_messages if isinstance(m, SystemMessage)),
+                    "No system prompt found"
+                )
+
+                # 2. Historial limpio (solo HumanMessage + AIMessage final sin tool_calls)
+                clean_log_history = [
+                    m for m in final_messages
+                    if not isinstance(m, SystemMessage)
+                    and not (type(m).__name__ == "ToolMessage" or getattr(m, "type", "") == "tool")
+                    and not (
+                        (type(m).__name__ == "AIMessage" or getattr(m, "type", "") == "ai")
+                        and getattr(m, "tool_calls", None)
                     )
-                else:
-                    cleaned_log_str = full_log_str
-                
+                ]
+
+                # 3. Última pregunta del usuario
+                user_msgs = [
+                    m for m in final_messages
+                    if type(m).__name__ == "HumanMessage" or getattr(m, "type", "") == "human"
+                ]
+                last_question = user_msgs[-1].content if user_msgs else "No user question found in this context."
+
                 with open(log_path, "w", encoding="utf-8") as f:
-                    f.write(cleaned_log_str)
+                    # --- SYSTEM PROMPT ---
+                    f.write(SEP + " SYSTEM PROMPT\n" + SEP)
+                    f.write(system_content + "\n\n")
+
+                    # --- AVAILABLE TOOLS (abreviado) ---
+                    f.write(SEP + " AVAILABLE TOOLS\n" + SEP)
+                    f.write(f"... [LISTA DE HERRAMIENTAS MCP OMITIDAS] ... ({num_tools} herramientas activas)\n\n")
+
+                    # --- TRIMMED CONVERSATION HISTORY ---
+                    f.write(SEP + " TRIMMED CONVERSATION HISTORY (LAST 5 MESSAGES — solo Human & AI final)\n" + SEP)
+                    if clean_log_history:
+                        for idx, msg in enumerate(clean_log_history):
+                            msg_type = type(msg).__name__
+                            f.write(f"[{msg_type}] ({idx + 1}/{len(clean_log_history)}):\n")
+                            f.write(f"{msg.content}\n")
+                            f.write("-" * 80 + "\n")
+                    else:
+                        f.write("(historial vacío)\n")
+                    f.write("\n")
+
+                    # --- LAST USER QUESTION ---
+                    f.write(SEP + " LAST USER QUESTION\n" + SEP)
+                    f.write(last_question + "\n")
+
             except Exception as e:
                 print(f"[ERROR] Fallo al escribir en llm_context_debug.log: {e}")
 
         # Ejecutamos el log del contexto antes de invocar al LLM
-        log_llm_context(messages, tools)
+        log_llm_context(messages, len(tools))
 
         response = llm_with_tools.invoke(messages)
         
