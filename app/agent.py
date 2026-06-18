@@ -106,6 +106,21 @@ def create_agent(tools: list) -> CompiledStateGraph:
             token_counter=len,
         )
 
+        # Compresión de historial: Vaciar el contenido de ToolMessage ya procesados
+        for idx in range(len(trimmed_history)):
+            msg = trimmed_history[idx]
+            if type(msg).__name__ == "ToolMessage" or getattr(msg, "type", "") == "tool":
+                # Si hay algún AIMessage posterior en el historial recortado, significa que ya fue procesado
+                has_subsequent_ai = False
+                for j in range(idx + 1, len(trimmed_history)):
+                    next_msg = trimmed_history[j]
+                    if type(next_msg).__name__ == "AIMessage" or getattr(next_msg, "type", "") == "ai":
+                        has_subsequent_ai = True
+                        break
+                
+                if has_subsequent_ai:
+                    msg.content = "[Salida de herramienta omitida para ahorrar contexto. El modelo ya procesó esta información]"
+
         system_prompt = SystemMessage(
             content=(
                 "Eres un asistente técnico especializado que opera EXCLUSIVAMENTE como un orquestador de herramientas a través de los servidores MCP conectados. \n"

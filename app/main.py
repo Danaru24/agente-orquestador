@@ -118,6 +118,82 @@ async def validate_url_async(url: str, timeout_seconds: float) -> bool:
 
 
 # =====================================================================
+# 3.5. LIMPIEZA DE TABLAS Y COLUMNAS INNECESARIAS (PRE-PROCESAMIENTO)
+# =====================================================================
+
+def clean_mcp_output(text: str) -> str:
+    """
+    Intercepta el texto devuelto por las herramientas del MCP.
+    Elimina columnas innecesarias de salidas tabulares y hashes largos.
+    """
+    if not text or not isinstance(text, str):
+        return text
+
+    lines = text.split("\n")
+    header_idx = -1
+    for idx, line in enumerate(lines):
+        # Buscamos la fila de cabecera típica de kubectl
+        if any(keyword in line for keyword in ["NAME", "READY", "STATUS", "RESTARTS", "AGE", "NOMINATED"]):
+            header_idx = idx
+            break
+
+    if header_idx == -1:
+        # No se encontró tabla típica, se devuelve el texto con limpieza de hashes
+        return re.sub(r'(?<!app=)(?<!pod-template-hash=)\b[a-f0-9]{10,}\b', '[hash]', text)
+
+    header_line = lines[header_idx]
+    # Dividir las columnas basándonos en 2 o más espacios consecutivos
+    columns = re.split(r'\s{2,}', header_line.strip())
+    if len(columns) <= 1:
+        return re.sub(r'(?<!app=)(?<!pod-template-hash=)\b[a-f0-9]{10,}\b', '[hash]', text)
+
+    # Columnas que deseamos excluir por completo
+    cols_to_exclude = {"READINESS GATES", "NOMINATED NODE", "AGE"}
+    col_ranges = []
+    current_pos = 0
+    for col in columns:
+        start = header_line.find(col, current_pos)
+        end = start + len(col)
+        current_pos = end
+        col_ranges.append((col, start, end))
+
+    keep_indices = []
+    for i, (col, start, end) in enumerate(col_ranges):
+        if col.upper() not in cols_to_exclude:
+            keep_indices.append(i)
+
+    # Calcular los cortes (slices) de cada columna a conservar
+    slices = []
+    for i in keep_indices:
+        start = col_ranges[i][1]
+        if i + 1 < len(col_ranges):
+            end = col_ranges[i+1][1]
+        else:
+            end = None
+        slices.append((start, end))
+
+    cleaned_lines = []
+    for idx, line in enumerate(lines):
+        if idx < header_idx:
+            # Preservar líneas previas (como warnings o descripciones)
+            cleaned_lines.append(line)
+            continue
+        if not line.strip():
+            cleaned_lines.append(line)
+            continue
+        row_parts = []
+        for start, end in slices:
+            part = line[start:end].rstrip() if end is not None else line[start:].rstrip()
+            row_parts.append(part)
+        cleaned_lines.append("    ".join(row_parts))
+
+    cleaned_text = "\n".join(cleaned_lines)
+    # Reemplazar hashes largos de hexadecimales que no pertenezcan a app= o pod-template-hash=
+    cleaned_text = re.sub(r'(?<!app=)(?<!pod-template-hash=)\b[a-f0-9]{10,}\b', '[hash]', cleaned_text)
+    return cleaned_text
+
+
+# =====================================================================
 # 4. AUXILIAR DE RENDERIZACIÓN SSE Y GENERADOR
 # =====================================================================
 
@@ -192,6 +268,9 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
                                     result = await bound_session.call_tool(tool_name, arguments=mcp_args)
                                     text_content = str(result)
+
+                                    # Limpieza de tablas y columnas innecesarias (Pre-procesamiento)
+                                    text_content = clean_mcp_output(text_content)
 
                                     # Truncamiento de salidas masivas (Output Clipping)
                                     if len(text_content) > 2000:
