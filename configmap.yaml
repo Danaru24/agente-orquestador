@@ -6,7 +6,7 @@ metadata:
     app: k8s-webhook-agent
 data:
   # URL del LLM local ejecutándose en el clúster o accesible por red
-  LOCAL_MODEL_URL: "http://llm-service.my-namespace.svc.cluster.local:8000/v1"
+  LOCAL_MODEL_URL: "http://redhataiqwen25-7b-instruct-qua-predictor.infra-ia.svc.cluster.local:8080/v1"
   
   # Nombre de identificación del modelo a invocar
   LOCAL_MODEL_NAME: "local-model"
@@ -27,4 +27,4 @@ data:
   LOG_LEVEL: "INFO"
   
   # URL del servidor MCP remoto para Kubernetes usando transporte SSE
-  K8S_MCP_URL: "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
+  K8S_MCP_URL: "http://kubernetes-mcp-server:8080/mcp"

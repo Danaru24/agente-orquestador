@@ -5,7 +5,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: mcp-service-account
-  namespace: infra-ai
+  namespace: infra-ia
 
 ---
 # ==============================================================================
@@ -75,7 +75,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: mcp-service-account
-    namespace: infra-ai
+    namespace: infra-ia
 roleRef:
   kind: ClusterRole
   name: mcp-cluster-reader
