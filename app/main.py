@@ -41,7 +41,9 @@ except ImportError:
 MCP_SERVERS = [
     url.strip() for url in os.getenv(
         "MCP_SERVERS",
-        "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/sse,https://zabbix-mcp-server-agente-command.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
+        # Conexión únicamente con Kubernetes MCP Server (Zabbix desactivado/comentado)
+        "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/sse"
+        # "https://kubernetes-mcp-server-infra-ai.apps.ocp.zz987.sandbox2813.opentlc.com/sse,https://zabbix-mcp-server-agente-command.apps.ocp.zz987.sandbox2813.opentlc.com/mcp"
     ).split(",") if url.strip()
 ]
 
