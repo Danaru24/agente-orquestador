@@ -9,60 +9,133 @@ metadata:
 
 ---
 # ==============================================================================
-# 2. ClusterRole (Permisos de solo lectura excluyendo Secrets)
+# 2. ClusterRole (Permisos de administración extendidos)
 # ==============================================================================
-apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
 metadata:
-  name: mcp-cluster-reader
+  name: mcp-cluster-operator
 rules:
-  # Grupo Principal (Core)
-  - apiGroups: [""]
-    resources: 
-      - "nodes"
-      - "pods"
-      - "pods/log"
-      - "events"
-      - "services"
-      - "endpoints"
-      - "configmaps"
-      - "namespaces"
-      - "persistentvolumes"
-      - "persistentvolumeclaims"
-    verbs: ["get", "list", "watch"]
-
-  # Cargas de trabajo
-  - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
-    verbs: ["get", "list", "watch"]
-
-  # Tareas programadas
-  - apiGroups: ["batch"]
-    resources: ["cronjobs", "jobs"]
-    verbs: ["get", "list", "watch"]
-
-  # Red
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses", "networkpolicies"]
-    verbs: ["get", "list", "watch"]
-
-  # Ecosistema OpenShift
-  - apiGroups: ["route.openshift.io"]
-    resources: ["routes"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["project.openshift.io"]
-    resources: ["projects"]
-    verbs: ["get", "list", "watch"]
-
-  # Autoscalado
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["get", "list", "watch"]
-
-  # Almacenamiento
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["get", "list", "watch"]
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - ''
+    resources:
+      - nodes
+      - pods
+      - pods/log
+      - events
+      - services
+      - endpoints
+      - configmaps
+      - namespaces
+      - persistentvolumes
+      - persistentvolumeclaims
+  - verbs:
+      - create
+    apiGroups:
+      - ''
+    resources:
+      - pods/exec
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - apps
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - batch
+    resources:
+      - cronjobs
+      - jobs
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+      - networkpolicies
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - route.openshift.io
+    resources:
+      - routes
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - project.openshift.io
+    resources:
+      - projects
+  - verbs:
+      - get
+      - list
+    apiGroups:
+      - metrics.k8s.io
+    resources:
+      - pods
+      - nodes
+  - verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+    apiGroups:
+      - autoscaling
+    resources:
+      - horizontalpodautoscalers
+  - verbs:
+      - get
+      - list
+      - watch
+    apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
 
 ---
 # ==============================================================================
@@ -75,8 +148,8 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: mcp-service-account
-    namespace: infra-ia
+    namespace: infra-ai
 roleRef:
   kind: ClusterRole
-  name: mcp-cluster-reader
+  name: mcp-cluster-operator
   apiGroup: rbac.authorization.k8s.io
