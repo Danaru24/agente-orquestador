@@ -46,7 +46,16 @@ MCP_SERVERS = [
     ).split(",") if url.strip()
 ]
 
-POSTGRES_URI = os.getenv("POSTGRES_URI", "postgresql://user:pass@localhost:5432/langgraph")
+postgres_user = os.getenv("POSTGRES_USER", "user")
+postgres_password = os.getenv("POSTGRES_PASSWORD", "pass")
+postgres_host = os.getenv("POSTGRES_HOST", "localhost")
+postgres_port = os.getenv("POSTGRES_PORT", "5432")
+postgres_db = os.getenv("POSTGRES_DB", "langgraph")
+
+POSTGRES_URI = os.getenv(
+    "POSTGRES_URI", 
+    f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
+)
 
 # =====================================================================
 # 1. INICIALIZACIÓN DE LA APLICACIÓN FASTAPI
