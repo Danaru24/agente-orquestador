@@ -9,10 +9,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.checkpoint.memory import MemorySaver
 
-# Instanciamos el checkpointer en memoria de forma global para mantener el historial entre peticiones
-memory_checkpointer = MemorySaver()
 
 # =====================================================================
 # 1. DEFINICIÓN DEL ESTADO DEL AGENTE (AgentState)
@@ -35,7 +32,7 @@ class AgentState(TypedDict):
 # 2. CONSTRUCCIÓN DEL FLUJO (Grafo) Y VINCULACIÓN DE HERRAMIENTAS
 # =====================================================================
 
-def create_agent(tools: list) -> CompiledStateGraph:
+def create_agent(tools: list, checkpointer=None) -> CompiledStateGraph:
     """
     Inicializa el LLM local, asocia las herramientas del servidor MCP remoto
     recibidas por parámetro, y compila el flujo (grafo) de LangGraph.
@@ -288,5 +285,5 @@ def create_agent(tools: list) -> CompiledStateGraph:
         workflow.set_entry_point("agent")
         workflow.add_edge("agent", END)
 
-    # Compilamos el grafo con el checkpointer global
-    return workflow.compile(checkpointer=memory_checkpointer)
+    # Compilamos el grafo con el checkpointer
+    return workflow.compile(checkpointer=checkpointer)

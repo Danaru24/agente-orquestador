@@ -22,6 +22,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_core.messages import RemoveMessage
+from langgraph.checkpoint.postgres import AsyncPostgresSaver
 
 # Cargamos las variables de entorno desde el archivo .env si existe localmente
 load_dotenv()
@@ -44,6 +45,8 @@ MCP_SERVERS = [
         "http://kubernetes-mcp-server:8080/mcp"
     ).split(",") if url.strip()
 ]
+
+POSTGRES_URI = os.getenv("POSTGRES_URI", "postgresql://user:pass@localhost:5432/langgraph")
 
 # =====================================================================
 # 1. INICIALIZACIÓN DE LA APLICACIÓN FASTAPI
@@ -79,21 +82,34 @@ async def startup_event():
 # 2. DEFINICIÓN DE MODELOS DE PETICIÓN (Pydantic)
 # =====================================================================
 
+class ChatBody(BaseModel):
+    """
+    Submodelo que representa el objeto 'body' anidado dentro del payload
+    que envía el orquestador n8n.
+    """
+    chat_id: str = Field(
+        ...,
+        description="Identificador único de conversación (session) asignado por n8n."
+    )
+    currentMessage: str = Field(
+        ...,
+        description="Mensaje o pregunta actual enviada por el usuario."
+    )
+
+
 class WebhookRequest(BaseModel):
     """
-    Representa el esquema del cuerpo de la petición JSON que se recibe desde Open WebUI.
+    Representa el esquema del cuerpo de la petición JSON que se recibe desde n8n.
+    Contiene un objeto 'body' con los datos de la conversación y, opcionalmente,
+    la URL de webhook para validación asíncrona.
     """
-    url: str = Field(
+    body: ChatBody = Field(
         ...,
-        description="URL que debe ser validada de forma asíncrona antes de iniciar el flujo."
+        description="Objeto anidado con chat_id y currentMessage proveniente de n8n."
     )
-    message: str = Field(
-        ...,
-        description="Mensaje o pregunta enviada por el usuario al agente."
-    )
-    session_id: Optional[str] = Field(
-        default="webhook-session-default",
-        description="Identificador único de conversación para persistir el historial en LangGraph."
+    webhookUrl: Optional[str] = Field(
+        default=None,
+        description="URL del webhook de n8n que debe ser validada de forma asíncrona antes de iniciar el flujo."
     )
 
 
@@ -228,6 +244,9 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 
     try:
         async with AsyncExitStack() as stack:
+            checkpointer = await stack.enter_async_context(AsyncPostgresSaver.from_conn_string(POSTGRES_URI))
+            await checkpointer.setup()
+            
             all_tools = []
 
             # Conectamos con cada servidor de la lista usando la URL tal cual
@@ -307,7 +326,7 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
             print(f"[INFO] Agente compilado con un total de {len(all_tools)} herramientas combinadas.")
 
             # 5. Compilar el agente de LangGraph con las herramientas unificadas
-            agent_executor = create_agent(all_tools)
+            agent_executor = create_agent(all_tools, checkpointer=checkpointer)
             print("[INFO] Agente compilado dinámicamente. Iniciando ejecución del grafo...")
 
             # 6. Transmitir los tokens en formato SSE
@@ -448,31 +467,41 @@ async def sse_stream_generator(message: str, session_id: str) -> AsyncGenerator[
 @app.post("/webhook")
 async def webhook_endpoint(request_data: WebhookRequest):
     """
-    Webhook principal. Recibe peticiones HTTP POST con 'url' y 'message'.
+    Webhook principal. Recibe peticiones HTTP POST desde n8n con la estructura:
+    { "body": { "chat_id": "...", "currentMessage": "..." }, "webhookUrl": "..." }
     """
+    # ── Extraer campos del payload anidado de n8n ──
+    webhook_url = request_data.webhookUrl
+    message     = request_data.body.currentMessage
+    session_id  = request_data.body.chat_id
+
     try:
         url_timeout = float(os.getenv("URL_VALIDATION_TIMEOUT", "5"))
     except ValueError:
         url_timeout = 5.0
 
     print(f"[INFO] Petición de Webhook recibida.")
-    print(f"   > URL a validar: {request_data.url}")
-    print(f"   > Mensaje: {request_data.message[:50]}...")
-    print(f"   > Session ID: {request_data.session_id}")
+    print(f"   > webhookUrl: {webhook_url}")
+    print(f"   > Mensaje (body.currentMessage): {message[:80]}...")
+    print(f"   > Session ID (body.chat_id): {session_id}")
 
-    # Validar URL asíncronamente
-    is_url_valid = await validate_url_async(request_data.url, url_timeout)
-    if not is_url_valid:
-        print(f"[WARNING] Validación de URL fallida para {request_data.url}. Abortando petición.")
-        raise HTTPException(
-            status_code=400,
-            detail=f"La URL proporcionada '{request_data.url}' no respondió con un estado HTTP 200 OK. Flujo cancelado."
-        )
+    # ── Validar URL asíncronamente (solo si se proporcionó webhookUrl) ──
+    if webhook_url:
+        is_url_valid = await validate_url_async(webhook_url, url_timeout)
+        if not is_url_valid:
+            print(f"[WARNING] Validación de URL fallida para {webhook_url}. Abortando petición.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"La URL proporcionada '{webhook_url}' no respondió con un estado HTTP 200 OK. Flujo cancelado."
+            )
+        print("[SUCCESS] URL validada.")
+    else:
+        print("[INFO] No se proporcionó webhookUrl; se omite la validación de URL.")
 
-    print("[SUCCESS] URL validada. Iniciando streaming SSE del agente...")
-    
+    print(f"[SUCCESS] Iniciando streaming SSE del agente para session_id={session_id!r}...")
+
     return StreamingResponse(
-        sse_stream_generator(request_data.message, request_data.session_id),
+        sse_stream_generator(message, session_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
     )
