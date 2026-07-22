@@ -21,11 +21,11 @@ spec:
         - containerPort: 8080
           protocol: TCP
         
-        # Inyección de variables de entorno desde el ConfigMap creado anteriormente
         envFrom:
         - configMapRef:
             name: k8s-webhook-config
-            
+        - secretRef:
+            name: llama-stack-secret
         # Sondas de salud (Liveness/Readiness) para el control del ciclo de vida del Pod en OpenShift
         livenessProbe:
           httpGet:
